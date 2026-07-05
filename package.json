@@ -1,0 +1,44 @@
+{
+  "name": "football-team-stats",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev"
+  },
+  "dependencies": {
+    "@prisma/client": "5.22.0",
+    "antd": "5.22.2",
+    "lucide-react": "0.468.0",
+    "next": "14.2.21",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "@types/react": "18.3.17",
+    "@types/react-dom": "18.3.5",
+    "eslint": "9.17.0",
+    "eslint-config-next": "14.2.21",
+    "prisma": "5.22.0",
+    "typescript": "5.7.2",
+    "vitest": "2.1.8"
+  },
+  "packageManager": "pnpm@9.12.3+sha512.cce0f9de9c5a7c95bef944169cc5dfe8741abfb145078c0d508b868056848a87c81e626246cb60967cbd7fd29a6c062ef73ff840d96b3c86c40ac92cf4a813ee",
+  "description": "足球队赛季数据统计系统 P0。系统用于维护球员名单、赛季、队内赛/队外赛比赛日、AI 赛后文本解析、人工确认入库，以及按数据库事件重新计算赛季榜单。",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib",
+    "test": "tests"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

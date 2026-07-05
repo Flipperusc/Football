@@ -1,0 +1,394 @@
+import { z } from "zod";
+import type { ParserPlayer } from "./local-parser";
+
+const rosterTeamColorSchema = z.enum(["RED", "BLUE", "WHITE", "EXTERNAL"]);
+const rosterRoleSchema = z.enum(["PLAYER", "GOALKEEPER"]);
+
+const rosterCandidateSchema = z.object({
+  playerId: z.string(),
+  name: z.string(),
+  confidence: z.number().min(0).max(1)
+});
+
+const rosterAssignmentSchema = z.object({
+  teamColor: rosterTeamColorSchema,
+  role: rosterRoleSchema.default("PLAYER"),
+  rawName: z.string(),
+  playerId: z.string().nullable(),
+  matchedName: z.string().nullable().optional(),
+  confidence: z.number().min(0).max(1),
+  candidates: z.array(rosterCandidateSchema).default([]),
+  needsReview: z.boolean().default(false)
+});
+
+export const rosterParseResultSchema = z.object({
+  assignments: z.array(rosterAssignmentSchema).default([]),
+  uncertainItems: z
+    .array(
+      z.object({
+        rawText: z.string(),
+        reason: z.string(),
+        candidates: z.array(rosterCandidateSchema).default([])
+      })
+    )
+    .default([])
+});
+
+export type RosterParseResult = z.infer<typeof rosterParseResultSchema>;
+export type RosterAssignment = z.infer<typeof rosterAssignmentSchema>;
+
+type RosterParseInput = {
+  rawText: string;
+  matchType: "INTERNAL" | "EXTERNAL";
+  players: ParserPlayer[];
+};
+
+type AiRosterRow = {
+  teamColor: "RED" | "BLUE" | "WHITE" | "EXTERNAL";
+  role: "PLAYER" | "GOALKEEPER";
+  rawName: string;
+};
+
+const aiRosterResultSchema = z.object({
+  assignments: z
+    .array(
+      z.object({
+        teamColor: rosterTeamColorSchema,
+        role: rosterRoleSchema.default("PLAYER"),
+        rawName: z.string()
+      })
+    )
+    .default([])
+});
+
+const teamPrefixMatchers: { teamColor: AiRosterRow["teamColor"]; pattern: RegExp }[] = [
+  { teamColor: "RED", pattern: /^\s*(?:\u7ea2\u961f?|\bred\b)\s*[:\uFF1A,，、;\s-]*/i },
+  { teamColor: "BLUE", pattern: /^\s*(?:\u84dd\u961f?|\bblue\b)\s*[:\uFF1A,，、;\s-]*/i },
+  { teamColor: "WHITE", pattern: /^\s*(?:\u767d\u961f?|\bwhite\b)\s*[:\uFF1A,，、;\s-]*/i }
+];
+
+const ignoredChineseTokens = new Set([
+  "\u7ea2",
+  "\u7ea2\u961f",
+  "\u84dd",
+  "\u84dd\u961f",
+  "\u767d",
+  "\u767d\u961f",
+  "\u95e8\u5c06",
+  "\u5b88\u95e8\u5458",
+  "\u961f\u957f",
+  "\u66ff\u8865"
+]);
+
+function extractJson(text: string) {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{")) return trimmed;
+  const fenced = trimmed.match(/```json\s*([\s\S]*?)```/i) ?? trimmed.match(/```\s*([\s\S]*?)```/);
+  if (fenced) return fenced[1].trim();
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) return trimmed.slice(start, end + 1);
+  return trimmed;
+}
+
+function removeArabicDigits(value: string) {
+  return value.replace(/[0-9\uFF10-\uFF19]/g, "");
+}
+
+function chineseOnly(value: string) {
+  return Array.from(removeArabicDigits(value).matchAll(/[\u3400-\u9fff]+/g))
+    .map((match) => match[0])
+    .join("");
+}
+
+function sanitizePersonName(value: string) {
+  let name = chineseOnly(value)
+    .replace(/^(\u95e8\u5c06|\u5b88\u95e8\u5458|\u961f\u957f|\u66ff\u8865)/, "")
+    .trim();
+  if (ignoredChineseTokens.has(name)) return "";
+  return name;
+}
+
+function normalize(value: string) {
+  return sanitizePersonName(value).replace(/\s+/g, "");
+}
+
+function recordsFor(players: ParserPlayer[]) {
+  return players
+    .flatMap((player) => [
+      { player, alias: normalize(player.name), weight: 1 },
+      ...player.aliases.map((alias) => ({
+        player,
+        alias: normalize(alias.alias),
+        weight: 0.96
+      }))
+    ])
+    .filter((record) => record.alias.length > 0)
+    .sort((left, right) => right.alias.length - left.alias.length);
+}
+
+function uniqueCandidates(candidates: { playerId: string; name: string; confidence: number }[]) {
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    if (seen.has(candidate.playerId)) return false;
+    seen.add(candidate.playerId);
+    return true;
+  });
+}
+
+function matchRawName(rawName: string, players: ParserPlayer[]) {
+  const value = normalize(rawName);
+  const records = recordsFor(players);
+  const exact = records.find((record) => record.alias === value);
+  if (exact) {
+    return {
+      playerId: exact.player.id,
+      matchedName: exact.player.name,
+      confidence: exact.weight,
+      candidates: []
+    };
+  }
+
+  const candidates = uniqueCandidates(
+    records
+      .filter((record) => value.includes(record.alias) || record.alias.includes(value))
+      .slice(0, 3)
+      .map((record) => ({
+        playerId: record.player.id,
+        name: record.player.name,
+        confidence: 0.55
+      }))
+  );
+
+  return {
+    playerId: candidates.length === 1 ? candidates[0].playerId : null,
+    matchedName: candidates.length === 1 ? candidates[0].name : null,
+    confidence: candidates.length === 1 ? 0.72 : 0.2,
+    candidates
+  };
+}
+
+function applyInternalGoalkeeperRule(
+  assignments: RosterAssignment[],
+  matchType: RosterParseInput["matchType"]
+): RosterAssignment[] {
+  if (matchType !== "INTERNAL") return assignments;
+
+  const lastIndexByTeam = new Map<"RED" | "BLUE" | "WHITE", number>();
+  assignments.forEach((assignment, index) => {
+    if (assignment.teamColor === "RED" || assignment.teamColor === "BLUE" || assignment.teamColor === "WHITE") {
+      lastIndexByTeam.set(assignment.teamColor, index);
+    }
+  });
+
+  return assignments.map((assignment, index) => {
+    if (assignment.teamColor !== "RED" && assignment.teamColor !== "BLUE" && assignment.teamColor !== "WHITE") {
+      return assignment;
+    }
+    return {
+      ...assignment,
+      role: lastIndexByTeam.get(assignment.teamColor) === index ? "GOALKEEPER" : "PLAYER"
+    };
+  });
+}
+
+function consumeTeamPrefix(line: string) {
+  for (const matcher of teamPrefixMatchers) {
+    const match = line.match(matcher.pattern);
+    if (match) {
+      return {
+        teamColor: matcher.teamColor,
+        rest: line.slice(match[0].length)
+      };
+    }
+  }
+  return null;
+}
+
+function splitChineseNames(line: string) {
+  const withoutDigits = removeArabicDigits(line);
+  const names = withoutDigits.match(/[\u3400-\u9fff]+/g) ?? [];
+  return names.map(sanitizePersonName).filter(Boolean);
+}
+
+function roleAndRest(line: string): { role: AiRosterRow["role"]; rest: string } {
+  const goalkeeperPrefix = /^\s*(?:\u95e8\u5c06|\u5b88\u95e8\u5458|gk)\s*[:\uFF1A,，、;\s-]*/i;
+  const match = line.match(goalkeeperPrefix);
+  if (!match) return { role: "PLAYER", rest: line };
+  return { role: "GOALKEEPER", rest: line.slice(match[0].length) };
+}
+
+function localRows(input: RosterParseInput): AiRosterRow[] {
+  const rows: AiRosterRow[] = [];
+  let currentTeam: AiRosterRow["teamColor"] = input.matchType === "EXTERNAL" ? "EXTERNAL" : "RED";
+
+  for (const rawLine of input.rawText.split(/\r?\n/)) {
+    let line = rawLine.trim();
+    if (!line) continue;
+
+    const teamPrefix = input.matchType === "INTERNAL" ? consumeTeamPrefix(line) : null;
+    if (teamPrefix) {
+      currentTeam = teamPrefix.teamColor;
+      line = teamPrefix.rest.trim();
+      if (!line) continue;
+    }
+
+    if (!chineseOnly(line)) continue;
+
+    const roleInfo = roleAndRest(line);
+    const names = splitChineseNames(roleInfo.rest);
+    for (const rawName of names) {
+      rows.push({
+        teamColor: currentTeam,
+        role: roleInfo.role,
+        rawName
+      });
+    }
+  }
+
+  return rows;
+}
+
+function finalizeRows(rows: AiRosterRow[], input: RosterParseInput): RosterParseResult {
+  const assignments: RosterAssignment[] = [];
+  const uncertainItems: RosterParseResult["uncertainItems"] = [];
+  const seen = new Set<string>();
+
+  for (const row of rows) {
+    const rawName = sanitizePersonName(row.rawName);
+    if (!rawName) continue;
+
+    const teamColor = input.matchType === "EXTERNAL" ? "EXTERNAL" : row.teamColor;
+    if (input.matchType === "INTERNAL" && teamColor === "EXTERNAL") continue;
+
+    const matched = matchRawName(rawName, input.players);
+    const key = `${teamColor}:${matched.playerId ?? rawName}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const finalized: RosterAssignment = {
+      teamColor,
+      role: row.role,
+      rawName,
+      playerId: matched.playerId,
+      matchedName: matched.matchedName,
+      confidence: matched.confidence,
+      candidates: matched.candidates,
+      needsReview: !matched.playerId || matched.confidence < 0.75
+    };
+
+    assignments.push(finalized);
+    if (finalized.needsReview) {
+      uncertainItems.push({
+        rawText: rawName,
+        reason: "Unable to match this Chinese name to a known player with high confidence.",
+        candidates: finalized.candidates
+      });
+    }
+  }
+
+  return { assignments: applyInternalGoalkeeperRule(assignments, input.matchType), uncertainItems };
+}
+
+function localParseRoster(input: RosterParseInput): RosterParseResult {
+  return finalizeRows(localRows(input), input);
+}
+
+function buildRosterPrompt(input: RosterParseInput) {
+  const playerList = input.players.map((player) => ({
+    name: player.name,
+    aliases: player.aliases.map((alias) => alias.alias)
+  }));
+
+  return [
+    "You are a roster structuring engine. Return valid JSON only.",
+    "Your task is to convert the user's roster text into structured rows that code can fill into a form.",
+    "Return exactly this shape: {\"assignments\":[{\"teamColor\":\"RED|BLUE|WHITE|EXTERNAL\",\"role\":\"PLAYER|GOALKEEPER\",\"rawName\":\"Chinese name from input\"}]}",
+    "Critical rule: ignore all Arabic digits completely, including 0-9 and full-width digits. Digits are never player names, jersey numbers, team names, or goalkeeper markers.",
+    "Only Chinese text can become rawName. rawName must contain Chinese characters only. Strip spaces, punctuation, colons, commas, and digits.",
+    "Do not infer GOALKEEPER from a digit line such as 10. For INTERNAL matches, the last valid player name under each team is the goalkeeper.",
+    "For INTERNAL matches, use section headers: \\u7ea2 or \\u7ea2\\u961f means RED, \\u84dd or \\u84dd\\u961f means BLUE, \\u767d or \\u767d\\u961f means WHITE.",
+    "For EXTERNAL matches, every player row must use teamColor EXTERNAL.",
+    "Do not output team color words, role words, punctuation, or numbers as players.",
+    "Use the known player list only to help identify names and aliases. Do not invent names that are not present in the roster text.",
+    `Match type: ${input.matchType}`,
+    `Known players: ${JSON.stringify(playerList)}`,
+    `Roster text:\n${input.rawText}`
+  ].join("\n\n");
+}
+
+async function callDeepSeekRoster(input: RosterParseInput) {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return null;
+
+  const model = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
+  const response = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "Return valid JSON only. Do not return Markdown or explanation text."
+        },
+        {
+          role: "user",
+          content: buildRosterPrompt(input)
+        }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`DeepSeek roster parse failed: ${response.status} ${await response.text()}`);
+  }
+
+  const payload = (await response.json()) as {
+    choices?: { message?: { content?: string } }[];
+  };
+  const content = payload.choices?.[0]?.message?.content;
+  if (!content) throw new Error("DeepSeek roster parse returned empty content");
+
+  const aiRows = aiRosterResultSchema.parse(JSON.parse(extractJson(content))).assignments;
+  return rosterParseResultSchema.parse(finalizeRows(aiRows, input));
+}
+
+export async function parseRosterWithAi(input: RosterParseInput) {
+  if (process.env.DEEPSEEK_API_KEY) {
+    try {
+      const parsed = await callDeepSeekRoster(input);
+      if (parsed) {
+        return {
+          parsed,
+          modelName: process.env.DEEPSEEK_MODEL || "deepseek-v4-flash",
+          usedFallback: false
+        };
+      }
+    } catch {
+      try {
+        const retried = await callDeepSeekRoster(input);
+        if (retried) {
+          return {
+            parsed: retried,
+            modelName: process.env.DEEPSEEK_MODEL || "deepseek-v4-flash",
+            usedFallback: false
+          };
+        }
+      } catch {
+        // Fall back to deterministic parsing below.
+      }
+    }
+  }
+
+  return {
+    parsed: rosterParseResultSchema.parse(localParseRoster(input)),
+    modelName: "local-roster-parser",
+    usedFallback: true
+  };
+}

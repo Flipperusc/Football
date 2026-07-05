@@ -1,0 +1,267 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PlayerStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum AliasType {
+  NICKNAME
+  TYPO
+  SHORT_NAME
+  MANUAL
+}
+
+enum SeasonStatus {
+  ACTIVE
+  ENDED
+}
+
+enum MatchType {
+  INTERNAL
+  EXTERNAL
+}
+
+enum ParseStatus {
+  PENDING
+  PARSED
+  CONFIRMED
+  FAILED
+}
+
+enum TeamColor {
+  RED
+  BLUE
+  WHITE
+  EXTERNAL
+}
+
+enum AssignmentRole {
+  PLAYER
+  GOALKEEPER
+}
+
+enum ParseResultStatus {
+  SUCCESS
+  NEEDS_REVIEW
+  FAILED
+}
+
+enum StatAdjustmentMetric {
+  INTERNAL_GOALS
+  INTERNAL_ASSISTS
+  INTERNAL_APPEARANCES
+  INTERNAL_SEASON_POINTS
+  EXTERNAL_GOALS
+  EXTERNAL_ASSISTS
+  EXTERNAL_APPEARANCES
+}
+
+enum StatAdjustmentOperation {
+  SET
+  ADJUST
+}
+
+model Player {
+  id                  String                @id @default(cuid())
+  name                String
+  jerseyNumber        Int?
+  position            String?
+  avatarUrl           String?
+  status              PlayerStatus          @default(ACTIVE)
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  aliases             PlayerAlias[]
+  assignments         TeamAssignment[]
+  goals               GoalEvent[]           @relation("ScorerEvents")
+  assists             GoalEvent[]           @relation("AssistEvents")
+  points              PlayerMatchdayPoint[]
+  awards              Award[]
+  statAdjustments     PlayerStatAdjustment[]
+}
+
+model PlayerAlias {
+  id        String    @id @default(cuid())
+  playerId  String
+  player    Player    @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  alias     String
+  aliasType AliasType @default(MANUAL)
+  createdAt DateTime  @default(now())
+
+  @@unique([playerId, alias])
+  @@index([alias])
+}
+
+model Season {
+  id        String       @id @default(cuid())
+  name      String
+  startDate DateTime
+  endDate   DateTime
+  status    SeasonStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  matchDays MatchDay[]
+  statAdjustments PlayerStatAdjustment[]
+}
+
+model MatchDay {
+  id             String                @id @default(cuid())
+  seasonId       String
+  season         Season                @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  date           DateTime
+  type           MatchType
+  rawText        String?
+  parseStatus    ParseStatus           @default(PENDING)
+  confirmedAt    DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  assignments    TeamAssignment[]
+  internalGames  InternalGame[]
+  goalEvents     GoalEvent[]
+  teamResults    TeamMatchdayResult[]
+  playerPoints   PlayerMatchdayPoint[]
+  awards         Award[]
+  parseResults   MatchParseResult[]
+
+  @@index([seasonId, date])
+}
+
+model TeamAssignment {
+  id         String         @id @default(cuid())
+  matchDayId String
+  matchDay   MatchDay       @relation(fields: [matchDayId], references: [id], onDelete: Cascade)
+  teamColor  TeamColor
+  playerId   String
+  player     Player         @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  role       AssignmentRole @default(PLAYER)
+  isCaptain  Boolean        @default(false)
+
+  @@unique([matchDayId, playerId])
+  @@index([matchDayId, teamColor])
+}
+
+model InternalGame {
+  id         String      @id @default(cuid())
+  matchDayId String
+  matchDay   MatchDay    @relation(fields: [matchDayId], references: [id], onDelete: Cascade)
+  sectionNo  Int
+  teamA      TeamColor
+  teamB      TeamColor
+  scoreA     Int
+  scoreB     Int
+  rawText    String?
+  goals      GoalEvent[]
+
+  @@unique([matchDayId, sectionNo])
+}
+
+model GoalEvent {
+  id             String        @id @default(cuid())
+  matchDayId     String
+  matchDay       MatchDay      @relation(fields: [matchDayId], references: [id], onDelete: Cascade)
+  internalGameId String?
+  internalGame   InternalGame? @relation(fields: [internalGameId], references: [id], onDelete: SetNull)
+  matchType      MatchType
+  teamColor      TeamColor?
+  scorerId       String
+  scorer         Player        @relation("ScorerEvents", fields: [scorerId], references: [id], onDelete: Restrict)
+  assistPlayerId String?
+  assistPlayer   Player?       @relation("AssistEvents", fields: [assistPlayerId], references: [id], onDelete: SetNull)
+  count          Int           @default(1)
+  rawText        String?
+  needsReview    Boolean       @default(false)
+
+  @@index([matchDayId])
+  @@index([scorerId])
+  @@index([assistPlayerId])
+}
+
+model TeamMatchdayResult {
+  id                   String    @id @default(cuid())
+  matchDayId           String
+  matchDay             MatchDay  @relation(fields: [matchDayId], references: [id], onDelete: Cascade)
+  teamColor            TeamColor
+  matchPoints          Int
+  goalsFor             Int
+  goalsAgainst         Int
+  goalDifference       Int
+  rank                 Int?
+  seasonPointsAwarded  Int
+  needsManualReview    Boolean   @default(false)
+
+  @@unique([matchDayId, teamColor])
+}
+
+model PlayerMatchdayPoint {
+  id          String   @id @default(cuid())
+  matchDayId  String
+  matchDay    MatchDay @relation(fields: [matchDayId], references: [id], onDelete: Cascade)
+  playerId    String
+  player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  basePoints  Int      @default(0)
+  bonusPoints Int      @default(0)
+  totalPoints Int      @default(0)
+  reason      String?
+
+  @@unique([matchDayId, playerId])
+}
+
+model Award {
+  id         String   @id @default(cuid())
+  matchDayId String
+  matchDay   MatchDay @relation(fields: [matchDayId], references: [id], onDelete: Cascade)
+  name       String
+  playerId   String?
+  player     Player?  @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  points     Int      @default(0)
+  note       String?
+  rawText    String?
+}
+
+model MatchParseResult {
+  id           String            @id @default(cuid())
+  matchDayId   String
+  matchDay     MatchDay          @relation(fields: [matchDayId], references: [id], onDelete: Cascade)
+  rawText      String
+  parsedJson   Json
+  modelName    String
+  status       ParseResultStatus
+  errorMessage String?
+  createdAt    DateTime          @default(now())
+
+  @@index([matchDayId, createdAt])
+}
+
+model PlayerStatAdjustment {
+  id        String                  @id @default(cuid())
+  seasonId  String
+  season    Season                  @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  playerId  String
+  player    Player                  @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  metric    StatAdjustmentMetric
+  operation StatAdjustmentOperation @default(ADJUST)
+  value     Int
+  reason    String
+  createdAt DateTime                @default(now())
+
+  @@index([seasonId, playerId, createdAt])
+}
+
+model TeamPhoto {
+  id        String   @id @default(cuid())
+  imageUrl  String
+  caption   String?
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder, createdAt])
+}

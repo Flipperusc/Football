@@ -1,0 +1,652 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import {
+  Alert,
+  App,
+  Button,
+  Checkbox,
+  Descriptions,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography
+} from "antd";
+import type { ColumnsType } from "antd/es/table";
+import { Plus, Save, Trash2 } from "lucide-react";
+import type { MatchDay, Player } from "@/lib/client-types";
+import { requestJson } from "@/lib/client-types";
+
+type AiTeamColor = "red" | "blue" | "white" | "external";
+
+type PlayerRef = {
+  rawName: string;
+  playerId: string | null;
+  matchedName?: string | null;
+  confidence: number;
+  candidates?: { playerId: string; name: string; confidence: number }[];
+};
+
+type ParsedEvent = {
+  type: "goal";
+  rawText: string;
+  team?: AiTeamColor;
+  scorer: PlayerRef;
+  assist?: PlayerRef | null;
+  count: number;
+  confidence: number;
+  needsReview: boolean;
+};
+
+type ParsedGame = {
+  sectionNo: number;
+  teamA: Exclude<AiTeamColor, "external">;
+  teamB: Exclude<AiTeamColor, "external">;
+  scoreA: number;
+  scoreB: number;
+  rawText: string;
+  events: ParsedEvent[];
+};
+
+type BonusPoint = {
+  player: PlayerRef;
+  points: number;
+  reason: string;
+  rawText: string;
+};
+
+type ParsedMatch = {
+  matchType: "internal" | "external";
+  games?: ParsedGame[];
+  events?: ParsedEvent[];
+  awards?: unknown[];
+  bonusPoints?: BonusPoint[];
+  uncertainItems?: { rawText: string; reason: string }[];
+};
+
+type EventRow = ParsedEvent & {
+  key: string;
+  gameIndex?: number;
+  eventIndex: number;
+  sectionNo?: number;
+};
+
+type AliasDraft = {
+  playerId: string;
+  rawName: string;
+  aliasType: "MANUAL" | "NICKNAME" | "TYPO" | "SHORT_NAME";
+};
+
+const teamOptions = [
+  { label: "红队", value: "red" },
+  { label: "蓝队", value: "blue" },
+  { label: "白队", value: "white" },
+  { label: "队外", value: "external" }
+];
+
+const teamLabels: Record<AiTeamColor, string> = {
+  red: "红队",
+  blue: "蓝队",
+  white: "白队",
+  external: "队外"
+};
+
+function cloneParsed(parsed: ParsedMatch) {
+  return JSON.parse(JSON.stringify(parsed)) as ParsedMatch;
+}
+
+function playerRefFromId(playerId: string | null | undefined, players: Player[], rawName?: string): PlayerRef {
+  if (!playerId) {
+    return {
+      rawName: rawName ?? "",
+      playerId: null,
+      matchedName: null,
+      confidence: 0,
+      candidates: []
+    };
+  }
+
+  const player = players.find((item) => item.id === playerId);
+  return {
+    rawName: rawName ?? player?.name ?? "",
+    playerId,
+    matchedName: player?.name ?? rawName ?? "",
+    confidence: 1,
+    candidates: []
+  };
+}
+
+function emptyEvent(team?: AiTeamColor): ParsedEvent {
+  return {
+    type: "goal",
+    team,
+    scorer: playerRefFromId(null, []),
+    assist: null,
+    count: 1,
+    rawText: "",
+    confidence: 1,
+    needsReview: true
+  };
+}
+
+export default function ConfirmMatchDayPage() {
+  const { message } = App.useApp();
+  const router = useRouter();
+  const params = useParams<{ id: string }>();
+  const [matchDay, setMatchDay] = useState<MatchDay | null>(null);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [parsed, setParsed] = useState<ParsedMatch | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string>();
+  const [aliasDrafts, setAliasDrafts] = useState<AliasDraft[]>([]);
+  const [aliasDraft, setAliasDraft] = useState<AliasDraft>({
+    playerId: "",
+    rawName: "",
+    aliasType: "MANUAL"
+  });
+
+  const playerOptions = useMemo(
+    () => players.map((player) => ({ label: player.name, value: player.id })),
+    [players]
+  );
+
+  async function load() {
+    setLoading(true);
+    try {
+      setLoadError(undefined);
+      const [matchRow, playerRows] = await Promise.all([
+        requestJson<MatchDay>(`/api/matchdays/${params.id}`),
+        requestJson<Player[]>("/api/players")
+      ]);
+      setMatchDay(matchRow);
+      setPlayers(playerRows);
+      setParsed((matchRow.parseResults?.[0]?.parsedJson ?? null) as ParsedMatch | null);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "加载解析结果失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, [params.id]);
+
+  const eventRows = useMemo<EventRow[]>(() => {
+    if (!parsed) return [];
+    if (parsed.matchType === "internal") {
+      return (parsed.games ?? []).flatMap((game, gameIndex) =>
+        game.events.map((event, eventIndex) => ({
+          ...event,
+          key: `${game.sectionNo}-${eventIndex}-${event.rawText}`,
+          gameIndex,
+          eventIndex,
+          sectionNo: game.sectionNo
+        }))
+      );
+    }
+    return (parsed.events ?? []).map((event, eventIndex) => ({
+      ...event,
+      key: `external-${eventIndex}-${event.rawText}`,
+      eventIndex
+    }));
+  }, [parsed]);
+
+  function updateParsed(mutator: (next: ParsedMatch) => void) {
+    setParsed((current) => {
+      if (!current) return current;
+      const next = cloneParsed(current);
+      mutator(next);
+      return next;
+    });
+  }
+
+  function updateGame(gameIndex: number, patch: Partial<ParsedGame>) {
+    updateParsed((next) => {
+      if (next.matchType !== "internal" || !next.games?.[gameIndex]) return;
+      next.games[gameIndex] = { ...next.games[gameIndex], ...patch };
+    });
+  }
+
+  function updateEvent(row: EventRow, patch: Partial<ParsedEvent>) {
+    updateParsed((next) => {
+      if (next.matchType === "internal") {
+        const game = next.games?.[row.gameIndex ?? -1];
+        if (!game?.events[row.eventIndex]) return;
+        game.events[row.eventIndex] = { ...game.events[row.eventIndex], ...patch };
+      } else if (next.events?.[row.eventIndex]) {
+        next.events[row.eventIndex] = { ...next.events[row.eventIndex], ...patch };
+      }
+    });
+  }
+
+  function moveEvent(row: EventRow, sectionNo: number) {
+    updateParsed((next) => {
+      if (next.matchType !== "internal" || row.gameIndex === undefined) return;
+      const fromGame = next.games?.[row.gameIndex];
+      const toGame = next.games?.find((game) => game.sectionNo === sectionNo);
+      if (!fromGame || !toGame) return;
+      const [event] = fromGame.events.splice(row.eventIndex, 1);
+      if (event) toGame.events.push(event);
+    });
+  }
+
+  function deleteEvent(row: EventRow) {
+    updateParsed((next) => {
+      if (next.matchType === "internal") {
+        const game = next.games?.[row.gameIndex ?? -1];
+        if (!game) return;
+        game.events.splice(row.eventIndex, 1);
+      } else {
+        next.events?.splice(row.eventIndex, 1);
+      }
+    });
+  }
+
+  function addEvent() {
+    updateParsed((next) => {
+      if (next.matchType === "internal") {
+        const game = next.games?.[0];
+        if (!game) return;
+        game.events.push(emptyEvent(game.teamA));
+      } else {
+        next.events = [...(next.events ?? []), emptyEvent("external")];
+      }
+    });
+  }
+
+  function updateBonus(index: number, patch: Partial<BonusPoint>) {
+    updateParsed((next) => {
+      if (!next.bonusPoints?.[index]) return;
+      next.bonusPoints[index] = { ...next.bonusPoints[index], ...patch };
+    });
+  }
+
+  function deleteBonus(index: number) {
+    updateParsed((next) => {
+      next.bonusPoints?.splice(index, 1);
+    });
+  }
+
+  function addBonus() {
+    updateParsed((next) => {
+      next.bonusPoints = [
+        ...(next.bonusPoints ?? []),
+        {
+          player: playerRefFromId(null, players),
+          points: 1,
+          reason: "",
+          rawText: ""
+        }
+      ];
+    });
+  }
+
+  function addAliasDraft() {
+    if (!aliasDraft.playerId || !aliasDraft.rawName.trim()) return;
+    setAliasDrafts((current) => [...current, aliasDraft]);
+    setAliasDraft({ playerId: "", rawName: "", aliasType: "MANUAL" });
+  }
+
+  function validateBeforeConfirm() {
+    if (!parsed) return "没有可确认的解析结果";
+    const events = parsed.matchType === "internal" ? parsed.games?.flatMap((game) => game.events) ?? [] : parsed.events ?? [];
+    if (events.some((event) => !event.scorer.playerId)) {
+      return "仍有进球球员没有匹配，请先在表格里选择球员";
+    }
+    if ((parsed.bonusPoints ?? []).some((bonus) => !bonus.player.playerId)) {
+      return "仍有加分球员没有匹配，请先在加分表里选择球员";
+    }
+    return null;
+  }
+
+  async function confirm() {
+    const error = validateBeforeConfirm();
+    if (error) {
+      message.error(error);
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await requestJson(`/api/matchdays/${params.id}/confirm`, {
+        method: "POST",
+        body: JSON.stringify({
+          parsedJson: parsed,
+          saveAliases: aliasDrafts
+        })
+      });
+      message.success("已确认入库");
+      router.push(`/matchdays/${params.id}/share`);
+    } catch (submitError) {
+      message.error(submitError instanceof Error ? submitError.message : "确认失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const gameColumns: ColumnsType<ParsedGame> = [
+    { title: "节次", dataIndex: "sectionNo", width: 80 },
+    {
+      title: "队伍 A",
+      render: (_, game, index) => (
+        <Select
+          style={{ width: 110 }}
+          value={game.teamA}
+          options={teamOptions.filter((item) => item.value !== "external")}
+          onChange={(teamA) => updateGame(index, { teamA })}
+        />
+      )
+    },
+    {
+      title: "队伍 B",
+      render: (_, game, index) => (
+        <Select
+          style={{ width: 110 }}
+          value={game.teamB}
+          options={teamOptions.filter((item) => item.value !== "external")}
+          onChange={(teamB) => updateGame(index, { teamB })}
+        />
+      )
+    },
+    {
+      title: "A 得分",
+      render: (_, game, index) => (
+        <InputNumber min={0} value={game.scoreA} onChange={(scoreA) => updateGame(index, { scoreA: scoreA ?? 0 })} />
+      )
+    },
+    {
+      title: "B 得分",
+      render: (_, game, index) => (
+        <InputNumber min={0} value={game.scoreB} onChange={(scoreB) => updateGame(index, { scoreB: scoreB ?? 0 })} />
+      )
+    },
+    {
+      title: "原文",
+      render: (_, game, index) => (
+        <Input value={game.rawText} onChange={(event) => updateGame(index, { rawText: event.target.value })} />
+      )
+    }
+  ];
+
+  const eventColumns: ColumnsType<EventRow> = [
+    {
+      title: "节次",
+      width: 100,
+      render: (_, row) =>
+        parsed?.matchType === "internal" ? (
+          <Select
+            style={{ width: 82 }}
+            value={row.sectionNo}
+            options={(parsed.games ?? []).map((game) => ({ label: `第 ${game.sectionNo} 节`, value: game.sectionNo }))}
+            onChange={(sectionNo) => moveEvent(row, sectionNo)}
+          />
+        ) : (
+          "-"
+        )
+    },
+    {
+      title: "进球队伍",
+      width: 120,
+      render: (_, row) => (
+        <Select
+          style={{ width: 100 }}
+          value={row.team}
+          options={parsed?.matchType === "internal" ? teamOptions.filter((item) => item.value !== "external") : teamOptions}
+          onChange={(team) => updateEvent(row, { team })}
+        />
+      )
+    },
+    {
+      title: "进球球员",
+      width: 180,
+      render: (_, row) => (
+        <Select
+          showSearch
+          optionFilterProp="label"
+          style={{ width: 160 }}
+          value={row.scorer.playerId ?? undefined}
+          options={playerOptions}
+          status={!row.scorer.playerId ? "error" : undefined}
+          onChange={(playerId) =>
+            updateEvent(row, {
+              scorer: playerRefFromId(playerId, players, row.scorer.rawName),
+              needsReview: false
+            })
+          }
+        />
+      )
+    },
+    {
+      title: "助攻球员",
+      width: 180,
+      render: (_, row) => (
+        <Select
+          allowClear
+          showSearch
+          optionFilterProp="label"
+          style={{ width: 160 }}
+          value={row.assist?.playerId ?? undefined}
+          options={playerOptions}
+          onChange={(playerId) =>
+            updateEvent(row, {
+              assist: playerId ? playerRefFromId(playerId, players, row.assist?.rawName) : null
+            })
+          }
+        />
+      )
+    },
+    {
+      title: "数量",
+      width: 90,
+      render: (_, row) => (
+        <InputNumber min={1} value={row.count} onChange={(count) => updateEvent(row, { count: count ?? 1 })} />
+      )
+    },
+    {
+      title: "需复核",
+      width: 90,
+      render: (_, row) => (
+        <Checkbox checked={row.needsReview} onChange={(event) => updateEvent(row, { needsReview: event.target.checked })} />
+      )
+    },
+    {
+      title: "原文",
+      render: (_, row) => (
+        <Input value={row.rawText} onChange={(event) => updateEvent(row, { rawText: event.target.value })} />
+      )
+    },
+    {
+      title: "操作",
+      width: 80,
+      render: (_, row) => (
+        <Button danger icon={<Trash2 size={16} />} onClick={() => deleteEvent(row)} />
+      )
+    }
+  ];
+
+  const bonusColumns: ColumnsType<BonusPoint> = [
+    {
+      title: "球员",
+      render: (_, bonus, index) => (
+        <Select
+          showSearch
+          optionFilterProp="label"
+          style={{ width: 180 }}
+          value={bonus.player.playerId ?? undefined}
+          options={playerOptions}
+          onChange={(playerId) => updateBonus(index, { player: playerRefFromId(playerId, players, bonus.player.rawName) })}
+        />
+      )
+    },
+    {
+      title: "分数",
+      width: 100,
+      render: (_, bonus, index) => (
+        <InputNumber value={bonus.points} onChange={(points) => updateBonus(index, { points: points ?? 0 })} />
+      )
+    },
+    {
+      title: "原因",
+      render: (_, bonus, index) => (
+        <Input value={bonus.reason} onChange={(event) => updateBonus(index, { reason: event.target.value })} />
+      )
+    },
+    {
+      title: "原文",
+      render: (_, bonus, index) => (
+        <Input value={bonus.rawText} onChange={(event) => updateBonus(index, { rawText: event.target.value })} />
+      )
+    },
+    {
+      title: "操作",
+      width: 80,
+      render: (_, __, index) => <Button danger icon={<Trash2 size={16} />} onClick={() => deleteBonus(index)} />
+    }
+  ];
+
+  return (
+    <>
+      <div className="page-title">
+        <div>
+          <h1>AI 解析确认</h1>
+          <p>解析结果已转换成表格，可直接修改比分、进球、助攻和球员匹配后确认入库</p>
+        </div>
+        <Button type="primary" icon={<Save size={16} />} onClick={confirm} loading={saving}>
+          确认入库
+        </Button>
+      </div>
+
+      {loadError ? <Alert type="error" showIcon message="加载失败" description={loadError} style={{ marginBottom: 16 }} /> : null}
+
+      {matchDay ? (
+        <div className="section-panel">
+          <Descriptions bordered size="small" column={{ xs: 1, md: 3 }}>
+            <Descriptions.Item label="日期">{matchDay.date.slice(0, 10)}</Descriptions.Item>
+            <Descriptions.Item label="类型">{matchDay.type === "INTERNAL" ? "队内赛" : "队外赛"}</Descriptions.Item>
+            <Descriptions.Item label="状态">{matchDay.parseStatus}</Descriptions.Item>
+          </Descriptions>
+        </div>
+      ) : null}
+
+      <div className="section-panel">
+        <Typography.Title level={4}>原始赛后文本</Typography.Title>
+        <Typography.Paragraph style={{ whiteSpace: "pre-wrap" }}>{matchDay?.rawText}</Typography.Paragraph>
+      </div>
+
+      {parsed?.uncertainItems?.length ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="需要人工确认的模糊项"
+          description={
+            <Space direction="vertical">
+              {parsed.uncertainItems.map((item, index) => (
+                <span key={`${item.rawText}-${index}`}>
+                  {item.rawText}：{item.reason}
+                </span>
+              ))}
+            </Space>
+          }
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
+
+      {parsed?.matchType === "internal" ? (
+        <div className="section-panel">
+          <Typography.Title level={4}>小节比分</Typography.Title>
+          <Table
+            rowKey="sectionNo"
+            loading={loading}
+            columns={gameColumns}
+            dataSource={parsed.games ?? []}
+            pagination={false}
+          />
+        </div>
+      ) : null}
+
+      <div className="section-panel">
+        <div className="toolbar">
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            进球与助攻
+          </Typography.Title>
+          <Button icon={<Plus size={16} />} onClick={addEvent}>
+            新增进球
+          </Button>
+        </div>
+        <Table rowKey="key" loading={loading} columns={eventColumns} dataSource={eventRows} pagination={false} scroll={{ x: 1100 }} />
+      </div>
+
+      <div className="section-panel">
+        <div className="toolbar">
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            额外加分
+          </Typography.Title>
+          <Button icon={<Plus size={16} />} onClick={addBonus}>
+            新增加分
+          </Button>
+        </div>
+        <Table
+          rowKey={(_, index) => `bonus-${index}`}
+          columns={bonusColumns}
+          dataSource={parsed?.bonusPoints ?? []}
+          pagination={false}
+        />
+      </div>
+
+      <div className="section-panel">
+        <Typography.Title level={4}>保存新别名</Typography.Title>
+        <Space.Compact style={{ width: "100%" }}>
+          <Select
+            showSearch
+            optionFilterProp="label"
+            style={{ width: 260 }}
+            placeholder="选择球员"
+            value={aliasDraft.playerId || undefined}
+            onChange={(playerId) => setAliasDraft((current) => ({ ...current, playerId }))}
+            options={playerOptions}
+          />
+          <Input
+            placeholder="原文里的名字"
+            value={aliasDraft.rawName}
+            onChange={(event) => setAliasDraft((current) => ({ ...current, rawName: event.target.value }))}
+          />
+          <Select
+            style={{ width: 150 }}
+            value={aliasDraft.aliasType}
+            onChange={(aliasType) => setAliasDraft((current) => ({ ...current, aliasType }))}
+            options={[
+              { label: "手动", value: "MANUAL" },
+              { label: "昵称", value: "NICKNAME" },
+              { label: "错别字", value: "TYPO" },
+              { label: "简称", value: "SHORT_NAME" }
+            ]}
+          />
+          <Button icon={<Plus size={16} />} onClick={addAliasDraft}>
+            添加
+          </Button>
+        </Space.Compact>
+        <Space wrap style={{ marginTop: 12 }}>
+          {aliasDrafts.map((draft, index) => (
+            <Tag
+              key={`${draft.playerId}-${draft.rawName}-${index}`}
+              closable
+              closeIcon={<Trash2 size={12} />}
+              onClose={(event) => {
+                event.preventDefault();
+                setAliasDrafts((current) => current.filter((_, itemIndex) => itemIndex !== index));
+              }}
+            >
+              {players.find((player) => player.id === draft.playerId)?.name}: {draft.rawName}
+            </Tag>
+          ))}
+        </Space>
+      </div>
+    </>
+  );
+}
