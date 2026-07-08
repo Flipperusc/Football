@@ -6,6 +6,7 @@ $envFile = Join-Path $rootDir ".env"
 $envExample = Join-Path $rootDir ".env.example"
 $tmpDir = Join-Path $rootDir ".tmp"
 $prismaBin = Join-Path $rootDir "node_modules\.bin\prisma.cmd"
+$script:UseCorepackPnpm = $false
 
 function Write-Step {
   param([string] $Message)
@@ -21,6 +22,14 @@ function Write-Warn {
 function Test-CommandExists {
   param([string] $Name)
   return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Invoke-Pnpm {
+  if ($script:UseCorepackPnpm) {
+    corepack pnpm @args
+  } else {
+    pnpm @args
+  }
 }
 
 Set-Location $rootDir
@@ -40,14 +49,15 @@ if (-not (Test-CommandExists "node")) {
 
 if (-not (Test-CommandExists "pnpm")) {
   if (Test-CommandExists "corepack") {
-    Write-Step "pnpm not found, enabling Corepack"
-    corepack enable
+    Write-Step "pnpm not found, using Corepack pnpm"
+    corepack prepare pnpm@9.12.3 --activate
+    $script:UseCorepackPnpm = $true
   } else {
     throw "pnpm is not installed. Install pnpm or enable Corepack first."
   }
 }
 
-if (-not (Test-CommandExists "pnpm")) {
+if (-not $script:UseCorepackPnpm -and -not (Test-CommandExists "pnpm")) {
   throw "pnpm is still not available after Corepack setup."
 }
 
@@ -63,29 +73,19 @@ if (-not (Test-Path $envFile)) {
 
 if (-not (Test-Path (Join-Path $rootDir "node_modules\.modules.yaml"))) {
   Write-Step "Installing dependencies"
-  pnpm install
+  Invoke-Pnpm install --frozen-lockfile --reporter append-only --child-concurrency=1
   if ($LASTEXITCODE -ne 0) {
-    Write-Warn "pnpm install failed. Trying to approve dependency build scripts and retry."
-    pnpm approve-builds --all
-    if ($LASTEXITCODE -ne 0) {
-      Write-Warn "pnpm approve-builds failed. Retrying install anyway."
-    }
-
-    pnpm install
+    Write-Warn "pnpm install failed. Retrying with a clean dependency rebuild."
+    $env:CI = "true"
+    Invoke-Pnpm install --frozen-lockfile --force --reporter append-only --child-concurrency=1
     if ($LASTEXITCODE -ne 0) {
       throw "pnpm install failed."
     }
   }
-
-  Write-Step "Approving dependency build scripts"
-  pnpm approve-builds --all
-  if ($LASTEXITCODE -ne 0) {
-    Write-Warn "pnpm approve-builds failed. Continuing because dependencies may already be usable."
-  }
 }
 
 Write-Step "Generating Prisma Client"
-pnpm prisma:generate
+Invoke-Pnpm prisma:generate
 if ($LASTEXITCODE -ne 0) {
   throw "Prisma Client generation failed."
 }
@@ -118,4 +118,4 @@ Write-Step "Starting Next.js dev server"
 Write-Host "URL: $url" -ForegroundColor Green
 Write-Host "Press Ctrl+C to stop the server." -ForegroundColor DarkGray
 
-pnpm dev --hostname $hostName --port $port
+Invoke-Pnpm dev --hostname $hostName --port $port

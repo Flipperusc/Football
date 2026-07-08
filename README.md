@@ -16,9 +16,9 @@
 1. 安装依赖
 
 ```bash
-pnpm install
-pnpm approve-builds --all
-pnpm prisma:generate
+corepack prepare pnpm@9.12.3 --activate
+corepack pnpm install --frozen-lockfile
+corepack pnpm prisma:generate
 ```
 
 2. 配置环境变量
@@ -36,13 +36,13 @@ DEEPSEEK_MODEL="deepseek-v4-flash"
 3. 初始化数据库
 
 ```bash
-pnpm prisma:migrate
+corepack pnpm prisma migrate deploy
 ```
 
 4. 启动开发服务器
 
 ```bash
-pnpm dev
+corepack pnpm dev
 ```
 
 默认访问 `http://localhost:3000`。
@@ -147,5 +147,5 @@ pnpm build
 
 - 生产环境必须配置 PostgreSQL `DATABASE_URL`。
 - 生产环境应配置 `DEEPSEEK_API_KEY`。
-- 数据库迁移通过 `pnpm prisma:migrate` 执行。
+- 数据库迁移通过 `corepack pnpm prisma migrate deploy` 执行。
 - 不要把 `.env` 提交到仓库。
