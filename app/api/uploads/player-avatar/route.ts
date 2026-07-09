@@ -1,8 +1,9 @@
 import { randomUUID } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
+import { writeFile } from "fs/promises";
 import path from "path";
 import { NextResponse } from "next/server";
 import { adminRequiredResponse, hasAdminSession } from "@/lib/server/admin-session";
+import { ensureUploadFolder } from "@/lib/server/upload-storage";
 
 export const runtime = "nodejs";
 
@@ -32,8 +33,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "头像图片不能超过 5MB" }, { status: 400 });
   }
 
-  const uploadDir = path.join(process.cwd(), "public", "uploads", "players");
-  await mkdir(uploadDir, { recursive: true });
+  const uploadDir = await ensureUploadFolder("players");
 
   const filename = `${Date.now()}-${randomUUID()}${extension}`;
   const filepath = path.join(uploadDir, filename);

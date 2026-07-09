@@ -46,6 +46,7 @@ Windows 本地快速启动入口是 `start.bat`，实际逻辑在 `scripts/start
 - `ADMIN_USERNAME`：后台管理员账号。
 - `ADMIN_PASSWORD`：后台管理员密码。
 - `ADMIN_SESSION_TOKEN`：后台登录 Cookie 中保存的会话 token。
+- `UPLOAD_DIR`：可选，生产环境上传图片持久化目录；不设置时默认写入项目 `public/uploads`。
 
 `.env` 已被 `.gitignore` 忽略。不要提交 `.env`，也不要泄露其中的真实数据库密码或 API Key。
 

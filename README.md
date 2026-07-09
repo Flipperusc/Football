@@ -29,9 +29,11 @@ corepack pnpm prisma:generate
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/football_team?schema=public"
 DEEPSEEK_API_KEY="sk-..."
 DEEPSEEK_MODEL="deepseek-v4-flash"
+UPLOAD_DIR=""
 ```
 
 `DEEPSEEK_API_KEY` 只能放在服务端环境变量里，前端不会直接调用 DeepSeek。
+`UPLOAD_DIR` 可选；生产环境建议设置为持久目录，例如 `/var/www/football-team-stats/uploads`，并确保运行 Next.js 的用户有读写权限。
 
 3. 初始化数据库
 
