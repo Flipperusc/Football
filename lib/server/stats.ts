@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { calculateSeasonPlayerStats, rankPlayers } from "@/lib/stats/calculate";
+import { isBestDefenderAwardName } from "@/lib/stats/awards";
 import type {
+  AwardInput,
   GoalEventInput,
   MatchDayInput,
   PlayerInput,
@@ -82,7 +84,8 @@ export async function loadSeasonStats(seasonId: string) {
         assignments: true,
         goalEvents: true,
         playerPoints: true,
-        teamResults: true
+        teamResults: true,
+        awards: true
       },
       orderBy: { date: "asc" }
     }),
@@ -120,14 +123,38 @@ export async function loadSeasonStats(seasonId: string) {
       count: event.count
     }))
   );
-  const playerPoints: PlayerPointInput[] = matchDays.flatMap((matchDay) =>
-    matchDay.playerPoints.map((point) => ({
-      matchDayId: point.matchDayId,
-      playerId: point.playerId,
-      basePoints: point.basePoints,
-      bonusPoints: point.bonusPoints,
-      totalPoints: point.totalPoints
+  const awards: AwardInput[] = matchDays.flatMap((matchDay) =>
+    matchDay.awards.map((award) => ({
+      matchDayId: award.matchDayId,
+      name: award.name,
+      playerId: award.playerId,
+      points: award.points
     }))
+  );
+  const bestDefenderPointsByPlayerMatchday = new Map<string, number>();
+  for (const award of awards) {
+    if (!award.playerId || !isBestDefenderAwardName(award.name) || award.points === 0) continue;
+    const key = `${award.matchDayId}:${award.playerId}`;
+    bestDefenderPointsByPlayerMatchday.set(
+      key,
+      (bestDefenderPointsByPlayerMatchday.get(key) ?? 0) + award.points
+    );
+  }
+  const playerPoints: PlayerPointInput[] = matchDays.flatMap((matchDay) =>
+    matchDay.playerPoints.map((point) => {
+      const excludedPoints = Math.min(
+        bestDefenderPointsByPlayerMatchday.get(`${point.matchDayId}:${point.playerId}`) ?? 0,
+        Math.max(point.bonusPoints, 0)
+      );
+
+      return {
+        matchDayId: point.matchDayId,
+        playerId: point.playerId,
+        basePoints: point.basePoints,
+        bonusPoints: point.bonusPoints - excludedPoints,
+        totalPoints: point.totalPoints - excludedPoints
+      };
+    })
   );
 
   const playerStats = applyStatAdjustments(
@@ -136,7 +163,8 @@ export async function loadSeasonStats(seasonId: string) {
       matchDays: typedMatchDays,
       assignments,
       goalEvents,
-      playerPoints
+      playerPoints,
+      awards
     }),
     statAdjustments.map((adjustment) => ({
       playerId: adjustment.playerId,
@@ -155,6 +183,7 @@ export async function loadSeasonStats(seasonId: string) {
       assists: rankPlayers(playerStats, "totalAssists"),
       appearances: rankPlayers(playerStats, "totalAppearances"),
       internalPoints: rankPlayers(playerStats, "internalSeasonPoints"),
+      bestDefenders: rankPlayers(playerStats, "bestDefenderAwards"),
       goalsPerAppearance: rankPlayers(playerStats, "goalsPerAppearance"),
       pointsPerInternalAppearance: rankPlayers(playerStats, "pointsPerInternalAppearance")
     }

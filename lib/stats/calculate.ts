@@ -1,4 +1,5 @@
 import type {
+  AwardInput,
   BonusPointInput,
   GoalEventInput,
   InternalGameInput,
@@ -10,6 +11,7 @@ import type {
   TeamColor,
   TeamResult
 } from "./types";
+import { isBestDefenderAwardName } from "./awards";
 
 const internalTeams: TeamColor[] = ["RED", "BLUE", "WHITE"];
 const seasonPointsByRank: Record<number, number> = {
@@ -168,6 +170,7 @@ export function calculateSeasonPlayerStats(input: {
   assignments: TeamAssignmentInput[];
   goalEvents: GoalEventInput[];
   playerPoints: PlayerPointInput[];
+  awards?: AwardInput[];
 }): PlayerSeasonStats[] {
   const matchTypeById = new Map(input.matchDays.map((matchDay) => [matchDay.id, matchDay.type]));
 
@@ -213,6 +216,9 @@ export function calculateSeasonPlayerStats(input: {
     const internalSeasonPoints = input.playerPoints
       .filter((point) => point.playerId === player.id)
       .reduce((sum, point) => sum + point.totalPoints, 0);
+    const bestDefenderAwards = (input.awards ?? []).filter(
+      (award) => award.playerId === player.id && isBestDefenderAwardName(award.name)
+    ).length;
     const internalAppearances = internalAppearanceDays.size;
     const externalAppearances = externalAppearanceDays.size;
     const totalGoals = internalGoals + externalGoals;
@@ -226,6 +232,7 @@ export function calculateSeasonPlayerStats(input: {
       internalAssists,
       internalAppearances,
       internalSeasonPoints,
+      bestDefenderAwards,
       externalGoals,
       externalAssists,
       externalAppearances,

@@ -13,6 +13,7 @@ type RankingPayload = {
   assists: PlayerStats[];
   appearances: PlayerStats[];
   internalPoints: PlayerStats[];
+  bestDefenders: PlayerStats[];
   goalsPerAppearance: PlayerStats[];
   pointsPerInternalAppearance: PlayerStats[];
 };
@@ -27,6 +28,7 @@ const baseColumns: ColumnsType<PlayerStats> = [
   { title: "队内助攻", dataIndex: "internalAssists" },
   { title: "队内出勤", dataIndex: "internalAppearances" },
   { title: "队内积分", dataIndex: "internalSeasonPoints" },
+  { title: "最佳后卫", dataIndex: "bestDefenderAwards" },
   { title: "队外进球", dataIndex: "externalGoals" },
   { title: "队外助攻", dataIndex: "externalAssists" },
   { title: "队外出勤", dataIndex: "externalAppearances" },
@@ -192,6 +194,20 @@ export default function RankingsPage() {
                   loading={loading}
                   columns={topColumns("积分", "internalSeasonPoints")}
                   dataSource={rankings?.internalPoints ?? []}
+                />
+              </div>
+            )
+          },
+          {
+            key: "best-defenders",
+            label: "最佳后卫榜",
+            children: (
+              <div className="section-panel">
+                <Table
+                  rowKey="playerId"
+                  loading={loading}
+                  columns={topColumns("次数", "bestDefenderAwards")}
+                  dataSource={rankings?.bestDefenders ?? []}
                 />
               </div>
             )

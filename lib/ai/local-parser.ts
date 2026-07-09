@@ -310,7 +310,7 @@ function parseAwards(line: string, players: ParserPlayer[]) {
     {
       name: bestDefender,
       players: splitKnownPlayers(rawPlayers, players),
-      points: 1,
+      points: 0,
       rawText: line
     }
   ];

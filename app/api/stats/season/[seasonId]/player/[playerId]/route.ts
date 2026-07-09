@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { loadSeasonStats } from "@/lib/server/stats";
+import { isBestDefenderAwardName } from "@/lib/stats/awards";
 import type { RecentStatChange } from "@/lib/client-types";
 
 const metricLabels = {
@@ -100,23 +101,29 @@ export async function GET(
 
       const awardsByName = new Map<string, { count: number; points: number; ids: string[] }>();
       for (const award of matchDay.awards) {
-        if (award.points === 0) continue;
+        const bestDefenderAward = isBestDefenderAwardName(award.name);
+        if (award.points === 0 && !bestDefenderAward) continue;
         const current = awardsByName.get(award.name) ?? { count: 0, points: 0, ids: [] };
         current.count += 1;
-        current.points += award.points;
+        current.points += bestDefenderAward ? 0 : award.points;
         current.ids.push(award.id);
         awardsByName.set(award.name, current);
       }
       for (const [awardName, awardSummary] of awardsByName) {
-        const pointText =
-          awardSummary.points > 0 ? `加${awardSummary.points}` : `减${Math.abs(awardSummary.points)}`;
-        const countText = awardSummary.count > 1 ? `${awardSummary.count}次` : "";
+        const countText = awardSummary.count > 1 ? `${awardSummary.count}?` : "";
+        const description = isBestDefenderAwardName(awardName)
+          ? `${dateText}${typeText}${awardName}${countText}`
+          : `${dateText}${typeText}${awardName}${countText}??????${
+              awardSummary.points > 0
+                ? `?${awardSummary.points}`
+                : `?${Math.abs(awardSummary.points)}`
+            }`;
         changes.push({
           id: `award-${awardSummary.ids.join("-")}`,
           date: matchDay.date.toISOString(),
           source: "MATCH",
           sortDate: matchDay.date,
-          description: `${dateText}${typeText}${awardName}${countText}，队内赛积分${pointText}`
+          description
         });
       }
 

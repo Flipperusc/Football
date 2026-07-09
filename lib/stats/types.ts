@@ -43,6 +43,13 @@ export type BonusPointInput = {
   reason?: string;
 };
 
+export type AwardInput = {
+  matchDayId: string;
+  name: string;
+  playerId?: string | null;
+  points: number;
+};
+
 export type PlayerPointInput = {
   matchDayId: string;
   playerId: string;
@@ -69,6 +76,7 @@ export type PlayerSeasonStats = {
   internalAssists: number;
   internalAppearances: number;
   internalSeasonPoints: number;
+  bestDefenderAwards: number;
   externalGoals: number;
   externalAssists: number;
   externalAppearances: number;

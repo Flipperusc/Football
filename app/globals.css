@@ -52,6 +52,12 @@ a {
   padding: 24px;
 }
 
+.app-top-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
 .page-title {
   display: flex;
   align-items: center;

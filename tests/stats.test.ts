@@ -117,12 +117,16 @@ describe("football statistics", () => {
       playerPoints: [
         { matchDayId: "m1", playerId: "p1", basePoints: 3, bonusPoints: 0, totalPoints: 3 },
         { matchDayId: "m1", playerId: "p2", basePoints: 3, bonusPoints: 0, totalPoints: 3 }
+      ],
+      awards: [
+        { matchDayId: "m1", name: "最佳后卫", playerId: "p1", points: 1 }
       ]
     });
 
     expect(stats.find((item) => item.playerId === "p1")).toMatchObject({
       internalAssists: 2,
       externalGoals: 1,
+      bestDefenderAwards: 1,
       totalAppearances: 2,
       goalsPerAppearance: 0.5,
       pointsPerInternalAppearance: 3

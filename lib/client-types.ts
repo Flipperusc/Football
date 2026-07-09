@@ -48,6 +48,7 @@ export type PlayerStats = {
   internalAssists: number;
   internalAppearances: number;
   internalSeasonPoints: number;
+  bestDefenderAwards: number;
   externalGoals: number;
   externalAssists: number;
   externalAppearances: number;

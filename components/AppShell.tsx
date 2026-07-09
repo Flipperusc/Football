@@ -13,7 +13,7 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
-import { Layout, Menu } from "antd";
+import { Button, Layout, Menu } from "antd";
 
 const { Sider, Content } = Layout;
 
@@ -62,7 +62,14 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
         <Menu mode="inline" selectedKeys={[selectedKey(pathname)]} items={items} />
       </Sider>
-      <Content className="app-content">{children}</Content>
+      <Content className="app-content">
+        <div className="app-top-actions">
+          <Link href="/">
+            <Button icon={<Home size={16} />}>返回前台</Button>
+          </Link>
+        </div>
+        {children}
+      </Content>
     </Layout>
   );
 }

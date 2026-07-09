@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { parseResultSchema, type ParseResult } from "@/lib/ai/schemas";
 import { calculateTeamResults, allocatePlayerMatchdayPoints } from "@/lib/stats/calculate";
+import { isBestDefenderAwardName } from "@/lib/stats/awards";
 import type {
   BonusPointInput,
   InternalGameInput,
@@ -30,6 +31,10 @@ const colorToDb = {
   white: "WHITE",
   external: "EXTERNAL"
 } as const;
+
+function awardPointsForStorage(name: string, points: number) {
+  return isBestDefenderAwardName(name) ? 0 : points;
+}
 
 function collectMissingPlayers(parsed: ParseResult) {
   const events = parsed.matchType === "internal" ? parsed.games.flatMap((game) => game.events) : parsed.events;
@@ -150,7 +155,7 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
               matchDayId: input.matchDayId,
               name: award.name,
               playerId: player.playerId,
-              points: award.points,
+              points: awardPointsForStorage(award.name, award.points),
               rawText: award.rawText
             }
           });
@@ -188,13 +193,13 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
           reason: bonus.reason
         }));
       const awardBonusPoints: BonusPointInput[] = parsed.awards.flatMap((award) =>
-        award.points === 0
+        award.points === 0 || isBestDefenderAwardName(award.name)
           ? []
           : award.players
               .filter((player) => player.playerId)
               .map((player) => ({
                 playerId: player.playerId!,
-                points: award.points,
+                points: awardPointsForStorage(award.name, award.points),
                 reason: award.name
               }))
       );
@@ -241,7 +246,7 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
               matchDayId: input.matchDayId,
               name: award.name,
               playerId: player.playerId,
-              points: award.points,
+              points: awardPointsForStorage(award.name, award.points),
               rawText: award.rawText
             }
           });

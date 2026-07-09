@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Alert, App, Button, Form, Input, Select, Table, Tag } from "antd";
+import { Alert, App, Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { CalendarPlus, Save } from "lucide-react";
+import { CalendarPlus, Pencil, Save, Trash2 } from "lucide-react";
 import type { Season } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
 
@@ -12,6 +12,12 @@ type SeasonFormValues = {
   startDate: string;
   endDate: string;
   status: "ACTIVE" | "ENDED";
+};
+
+type SeasonRow = Season & {
+  _count?: {
+    matchDays: number;
+  };
 };
 
 function toDateInput(date: Date) {
@@ -24,18 +30,31 @@ function addMonths(date: Date, months: number) {
   return next;
 }
 
+function defaultSeasonValues(): SeasonFormValues {
+  const start = new Date();
+  return {
+    name: `${start.getFullYear()}-${start.getMonth() + 1} 赛季`,
+    startDate: toDateInput(start),
+    endDate: toDateInput(addMonths(start, 3)),
+    status: "ACTIVE"
+  };
+}
+
 export default function SeasonsPage() {
   const { message } = App.useApp();
   const [form] = Form.useForm<SeasonFormValues>();
-  const [seasons, setSeasons] = useState<Season[]>([]);
+  const [editForm] = Form.useForm<SeasonFormValues>();
+  const [seasons, setSeasons] = useState<SeasonRow[]>([]);
+  const [editing, setEditing] = useState<SeasonRow | null>(null);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string>();
 
   async function load() {
     setLoading(true);
     try {
       setLoadError(undefined);
-      setSeasons(await requestJson<Season[]>("/api/seasons"));
+      setSeasons(await requestJson<SeasonRow[]>("/api/seasons"));
     } catch (error) {
       const text = error instanceof Error ? error.message : "加载赛季失败";
       setLoadError(text);
@@ -46,30 +65,56 @@ export default function SeasonsPage() {
   }
 
   useEffect(() => {
-    const start = new Date();
-    form.setFieldsValue({
-      name: `${start.getFullYear()}-${start.getMonth() + 1} 赛季`,
-      startDate: toDateInput(start),
-      endDate: toDateInput(addMonths(start, 3)),
-      status: "ACTIVE"
-    });
+    form.setFieldsValue(defaultSeasonValues());
     void load();
   }, [form]);
 
   async function createSeason(values: SeasonFormValues) {
+    setSaving(true);
     try {
       await requestJson<Season>("/api/seasons", {
         method: "POST",
         body: JSON.stringify(values)
       });
       message.success("已创建赛季");
+      form.setFieldsValue(defaultSeasonValues());
       await load();
     } catch (error) {
       message.error(error instanceof Error ? error.message : "创建赛季失败");
+    } finally {
+      setSaving(false);
     }
   }
 
-  async function updateStatus(season: Season, status: "ACTIVE" | "ENDED") {
+  function openEdit(season: SeasonRow) {
+    setEditing(season);
+    editForm.setFieldsValue({
+      name: season.name,
+      startDate: season.startDate.slice(0, 10),
+      endDate: season.endDate.slice(0, 10),
+      status: season.status
+    });
+  }
+
+  async function updateSeason(values: SeasonFormValues) {
+    if (!editing) return;
+    setSaving(true);
+    try {
+      await requestJson<Season>(`/api/seasons/${editing.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(values)
+      });
+      message.success("已更新赛季");
+      setEditing(null);
+      await load();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "更新赛季失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function updateStatus(season: SeasonRow, status: "ACTIVE" | "ENDED") {
     try {
       await requestJson<Season>(`/api/seasons/${season.id}`, {
         method: "PATCH",
@@ -82,18 +127,46 @@ export default function SeasonsPage() {
     }
   }
 
-  const columns: ColumnsType<Season> = [
+  async function deleteSeason(season: SeasonRow) {
+    try {
+      await requestJson<{ ok: boolean }>(`/api/seasons/${season.id}`, { method: "DELETE" });
+      message.success("已删除赛季");
+      if (editing?.id === season.id) setEditing(null);
+      await load();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "删除赛季失败");
+    }
+  }
+
+  function renderSeasonFields() {
+    return (
+      <div className="form-grid">
+        <Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入赛季名称" }]}>
+          <Input />
+        </Form.Item>
+        <Form.Item name="startDate" label="开始日期" rules={[{ required: true, message: "请选择开始日期" }]}>
+          <Input type="date" />
+        </Form.Item>
+        <Form.Item name="endDate" label="结束日期" rules={[{ required: true, message: "请选择结束日期" }]}>
+          <Input type="date" />
+        </Form.Item>
+        <Form.Item name="status" label="状态">
+          <Select
+            options={[
+              { label: "进行中", value: "ACTIVE" },
+              { label: "已结束", value: "ENDED" }
+            ]}
+          />
+        </Form.Item>
+      </div>
+    );
+  }
+
+  const columns: ColumnsType<SeasonRow> = [
     { title: "名称", dataIndex: "name" },
-    {
-      title: "开始",
-      dataIndex: "startDate",
-      render: (value: string) => value.slice(0, 10)
-    },
-    {
-      title: "结束",
-      dataIndex: "endDate",
-      render: (value: string) => value.slice(0, 10)
-    },
+    { title: "开始", dataIndex: "startDate", render: (value: string) => value.slice(0, 10) },
+    { title: "结束", dataIndex: "endDate", render: (value: string) => value.slice(0, 10) },
+    { title: "比赛日", width: 100, render: (_, season) => season._count?.matchDays ?? 0 },
     {
       title: "状态",
       dataIndex: "status",
@@ -105,13 +178,31 @@ export default function SeasonsPage() {
     },
     {
       title: "操作",
+      width: 280,
       render: (_, season) => (
-        <Button
-          icon={<Save size={16} />}
-          onClick={() => updateStatus(season, season.status === "ACTIVE" ? "ENDED" : "ACTIVE")}
-        >
-          标记为{season.status === "ACTIVE" ? "已结束" : "进行中"}
-        </Button>
+        <Space wrap>
+          <Button icon={<Pencil size={16} />} onClick={() => openEdit(season)}>编辑</Button>
+          <Button
+            icon={<Save size={16} />}
+            onClick={() => updateStatus(season, season.status === "ACTIVE" ? "ENDED" : "ACTIVE")}
+          >
+            标记为{season.status === "ACTIVE" ? "已结束" : "进行中"}
+          </Button>
+          <Popconfirm
+            title="确定删除这个赛季？"
+            description={
+              (season._count?.matchDays ?? 0) > 0
+                ? "删除后会同时移除这个赛季下的比赛日和统计记录。"
+                : "删除后不可恢复。"
+            }
+            okText="删除"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+            onConfirm={() => deleteSeason(season)}
+          >
+            <Button danger icon={<Trash2 size={16} />} />
+          </Popconfirm>
+        </Space>
       )
     }
   ];
@@ -121,50 +212,41 @@ export default function SeasonsPage() {
       <div className="page-title">
         <div>
           <h1>赛季管理</h1>
-          <p>赛季长度由开始日期和结束日期决定，新建时默认填入三个月周期</p>
+          <p>维护赛季名称、开始日期、结束日期和当前状态。</p>
         </div>
       </div>
 
       <div className="section-panel">
         {loadError ? (
-          <Alert
-            type="error"
-            showIcon
-            message="赛季数据加载失败"
-            description={loadError}
-            style={{ marginBottom: 16 }}
-          />
+          <Alert type="error" showIcon message="赛季数据加载失败" description={loadError} style={{ marginBottom: 16 }} />
         ) : null}
 
         <Form form={form} layout="vertical" onFinish={createSeason}>
-          <div className="form-grid">
-            <Form.Item name="name" label="名称" rules={[{ required: true }]}>
-              <Input />
-            </Form.Item>
-            <Form.Item name="startDate" label="开始日期" rules={[{ required: true }]}>
-              <Input type="date" />
-            </Form.Item>
-            <Form.Item name="endDate" label="结束日期" rules={[{ required: true }]}>
-              <Input type="date" />
-            </Form.Item>
-            <Form.Item name="status" label="状态">
-              <Select
-                options={[
-                  { label: "进行中", value: "ACTIVE" },
-                  { label: "已结束", value: "ENDED" }
-                ]}
-              />
-            </Form.Item>
-          </div>
-          <Button type="primary" htmlType="submit" icon={<CalendarPlus size={16} />}>
+          {renderSeasonFields()}
+          <Button type="primary" htmlType="submit" icon={<CalendarPlus size={16} />} loading={saving}>
             创建赛季
           </Button>
         </Form>
       </div>
 
       <div className="section-panel">
-        <Table rowKey="id" loading={loading} columns={columns} dataSource={seasons} />
+        <Table rowKey="id" loading={loading} columns={columns} dataSource={seasons} scroll={{ x: 920 }} />
       </div>
+
+      <Modal
+        title={editing ? `编辑赛季：${editing.name}` : "编辑赛季"}
+        open={Boolean(editing)}
+        footer={null}
+        onCancel={() => setEditing(null)}
+        destroyOnClose
+      >
+        <Form form={editForm} layout="vertical" onFinish={updateSeason}>
+          {renderSeasonFields()}
+          <Button type="primary" htmlType="submit" icon={<Save size={16} />} loading={saving}>
+            保存赛季
+          </Button>
+        </Form>
+      </Modal>
     </>
   );
 }

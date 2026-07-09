@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseMatchWithAi } from "@/lib/ai/deepseek";
+import type { InternalParseResult, ParseResult } from "@/lib/ai/schemas";
 import type { ParserPlayer } from "@/lib/ai/local-parser";
 
 const previousDeepSeekKey = process.env.DEEPSEEK_API_KEY;
@@ -13,6 +14,12 @@ const teamAssignments = [
   { playerId: "p1", teamColor: "WHITE" as const },
   { playerId: "p2", teamColor: "WHITE" as const }
 ];
+
+function expectInternalParsed(parsed: ParseResult): InternalParseResult {
+  expect(parsed.matchType).toBe("internal");
+  if (parsed.matchType !== "internal") throw new Error("Expected internal parse result");
+  return parsed;
+}
 
 function mockDeepSeek(content: unknown) {
   vi.stubGlobal(
@@ -82,18 +89,18 @@ describe("post-match AI parsing", () => {
     });
 
     expect(result.usedFallback).toBe(false);
-    expect(result.parsed.matchType).toBe("internal");
-    expect(result.parsed.games).toHaveLength(6);
-    expect(result.parsed.games[0]).toMatchObject({
+    const parsed = expectInternalParsed(result.parsed);
+    expect(parsed.games).toHaveLength(6);
+    expect(parsed.games[0]).toMatchObject({
       sectionNo: 1,
       teamA: "white",
       teamB: "blue",
       scoreA: 1,
       scoreB: 0
     });
-    expect(result.parsed.games[0].events[0].scorer.playerId).toBe("p1");
-    expect(result.parsed.games[0].events[0].assist?.playerId).toBe("p2");
-    expect(result.parsed.bonusPoints[0].player.playerId).toBe("p1");
+    expect(parsed.games[0].events[0].scorer.playerId).toBe("p1");
+    expect(parsed.games[0].events[0].assist?.playerId).toBe("p2");
+    expect(parsed.bonusPoints[0].player.playerId).toBe("p1");
   });
 
   it("salvages old database-shaped DeepSeek output with missing confidence fields", async () => {
@@ -132,13 +139,14 @@ describe("post-match AI parsing", () => {
     });
 
     expect(result.usedFallback).toBe(false);
-    expect(result.parsed.games[0].sectionNo).toBe(1);
-    expect(result.parsed.games[0].scoreA).toBe(1);
-    expect(result.parsed.games[0].events[0].scorer.playerId).toBe("p1");
-    expect(result.parsed.games[0].events[0].assist?.playerId).toBe("p2");
+    const parsed = expectInternalParsed(result.parsed);
+    expect(parsed.games[0].sectionNo).toBe(1);
+    expect(parsed.games[0].scoreA).toBe(1);
+    expect(parsed.games[0].events[0].scorer.playerId).toBe("p1");
+    expect(parsed.games[0].events[0].assist?.playerId).toBe("p2");
   });
 
-  it("splits best defender awards and gives each player one point", async () => {
+  it("splits best defender awards without bonus points", async () => {
     delete process.env.DEEPSEEK_API_KEY;
 
     const result = await parseMatchWithAi({
@@ -155,7 +163,7 @@ describe("post-match AI parsing", () => {
     expect(result.parsed.matchType).toBe("internal");
     expect(result.parsed.awards[0]).toMatchObject({
       name: "\u6700\u4f73\u540e\u536b",
-      points: 1
+      points: 0
     });
     expect(result.parsed.awards[0].players.map((player) => player.playerId)).toEqual([
       "p3",

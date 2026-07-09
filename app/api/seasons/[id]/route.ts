@@ -28,3 +28,12 @@ export async function PATCH(request: Request, { params }: { params: { id: string
     return apiErrorResponse(error, "更新赛季失败");
   }
 }
+
+export async function DELETE(_: Request, { params }: { params: { id: string } }) {
+  try {
+    await prisma.season.delete({ where: { id: params.id } });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return apiErrorResponse(error, "删除赛季失败");
+  }
+}

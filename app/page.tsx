@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import type { MatchDay, Player, PlayerStats, RecentStatChange, Season, TeamPhoto } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
+import { normalizeImageUrl } from "@/lib/image-url";
 
 type LoginValues = {
   username: string;
@@ -222,14 +223,14 @@ function TeamStyleRail({ photos }: { photos: TeamPhoto[] }) {
       {featured ? (
         <>
           <figure className="team-style-featured">
-            <img src={featured.imageUrl} alt={featured.caption ?? "球队风采"} />
+            <img src={normalizeImageUrl(featured.imageUrl)} alt={featured.caption ?? "球队风采"} />
             {featured.caption ? <figcaption>{featured.caption}</figcaption> : null}
           </figure>
           {previewPhotos.length ? (
             <div className="team-style-photo-grid">
               {previewPhotos.map((photo, index) => (
                 <figure className="team-style-thumb-photo" key={photo.id}>
-                  <img src={photo.imageUrl} alt={photo.caption ?? "球队风采"} />
+                  <img src={normalizeImageUrl(photo.imageUrl)} alt={photo.caption ?? "球队风采"} />
                   {photo.caption ? <figcaption>{photo.caption}</figcaption> : null}
                   {index === previewPhotos.length - 1 && photos.length > 5 ? (
                     <span className="team-style-more">+{photos.length - 5}</span>
@@ -397,6 +398,14 @@ export default function PublicTeamPage() {
         rows: rankBy(stats, (row) => row.internalSeasonPoints),
         valueGetter: (row) => row.internalSeasonPoints,
         metricLabel: "分"
+      },
+      {
+        key: "best-defenders",
+        title: "最佳后卫榜",
+        icon: <Shield size={18} />,
+        rows: rankBy(stats, (row) => row.bestDefenderAwards),
+        valueGetter: (row) => row.bestDefenderAwards,
+        metricLabel: "次"
       },
       {
         key: "internal-goals",
@@ -643,6 +652,10 @@ export default function PublicTeamPage() {
               <div>
                 <span>出勤</span>
                 <strong>{selectedStats?.totalAppearances ?? 0}</strong>
+              </div>
+              <div>
+                <span>最佳后卫</span>
+                <strong>{selectedStats?.bestDefenderAwards ?? 0}</strong>
               </div>
               <div>
                 <span>场均得分</span>

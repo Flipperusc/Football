@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isAllowedStoredImageUrl, normalizeImageUrl } from "@/lib/image-url";
 
 export const playerStatusSchema = z.enum(["ACTIVE", "INACTIVE"]);
 export const aliasTypeSchema = z.enum(["NICKNAME", "TYPO", "SHORT_NAME", "MANUAL"]);
@@ -74,8 +75,16 @@ export const playerStatAdjustmentCreateSchema = z.object({
   reason: z.string().trim().min(1).max(500)
 });
 
+const storedImageUrlSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(2000)
+  .transform((value) => normalizeImageUrl(value))
+  .refine((value) => isAllowedStoredImageUrl(value), "Invalid image URL");
+
 export const teamPhotoCreateSchema = z.object({
-  imageUrl: z.string().trim().min(1).max(2000),
+  imageUrl: storedImageUrlSchema,
   caption: z.string().trim().max(100).optional().nullable(),
   sortOrder: z.number().int().default(0),
   isActive: z.boolean().default(true)
