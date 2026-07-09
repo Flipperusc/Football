@@ -17,7 +17,7 @@ import type { ColumnsType } from "antd/es/table";
 import { ImagePlus, Save, Trash2 } from "lucide-react";
 import type { TeamPhoto } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
-import { normalizeImageUrl } from "@/lib/image-url";
+import { getDisplayImageUrl, normalizeImageUrl } from "@/lib/image-url";
 
 type TeamPhotoFormValues = {
   imageUrl?: string;
@@ -39,7 +39,7 @@ function TeamPhotoUpload({
   value?: string;
   onChange?: (value?: string) => void;
 }) {
-  const previewUrl = normalizeImageUrl(value);
+  const previewUrl = getDisplayImageUrl(value);
 
   return (
     <div className="team-photo-upload-field">
@@ -207,7 +207,7 @@ export default function TeamPhotosPage() {
       title: "照片",
       width: 140,
       render: (_, photo) => (
-        <img className="team-photo-thumb" src={normalizeImageUrl(photo.imageUrl)} alt={photo.caption ?? "球队风采"} />
+        <img className="team-photo-thumb" src={getDisplayImageUrl(photo.imageUrl)} alt={photo.caption ?? "球队风采"} />
       )
     },
     {

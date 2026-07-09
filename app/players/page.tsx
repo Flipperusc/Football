@@ -20,6 +20,7 @@ import { Plus, Save, SlidersHorizontal, UserPlus } from "lucide-react";
 import { PlayerBulkImport } from "@/components/PlayerBulkImport";
 import type { Player, Season } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
+import { getDisplayImageUrl, normalizeImageUrl } from "@/lib/image-url";
 
 type PlayerFormValues = {
   name: string;
@@ -79,14 +80,18 @@ function avatarLabel(player: Player) {
 }
 
 function PlayerAvatar({ player }: { player: Player }) {
+  const avatarSrc = getDisplayImageUrl(player.avatarUrl);
+
   return (
     <span className="admin-player-avatar">
-      {player.avatarUrl ? <img src={player.avatarUrl} alt={player.name} /> : avatarLabel(player)}
+      {avatarSrc ? <img src={avatarSrc} alt={player.name} /> : avatarLabel(player)}
     </span>
   );
 }
 
 function AvatarUpload({ value, onChange }: { value?: string; onChange?: (value?: string) => void }) {
+  const previewUrl = getDisplayImageUrl(value);
+
   return (
     <div className="avatar-upload-field">
       <Upload.Dragger
@@ -124,9 +129,9 @@ function AvatarUpload({ value, onChange }: { value?: string; onChange?: (value?:
         showUploadList={false}
       >
         <div className="avatar-upload-content">
-          {value ? (
+          {previewUrl ? (
             <span className="admin-player-avatar admin-player-avatar-large">
-              <img src={value} alt="球员头像" />
+              <img src={previewUrl} alt="球员头像" />
             </span>
           ) : (
             <span className="avatar-upload-placeholder">+</span>
@@ -197,7 +202,7 @@ export default function PlayersPage() {
         name: values.name,
         jerseyNumber: values.jerseyNumber ?? null,
         position: values.position ?? null,
-        avatarUrl: values.avatarUrl?.trim() || null,
+        avatarUrl: normalizeImageUrl(values.avatarUrl) || null,
         status: values.status ?? "ACTIVE",
         aliases: (values.aliasesText ?? "")
           .split(/[,，\n]/)
@@ -219,7 +224,7 @@ export default function PlayersPage() {
         name: values.name,
         jerseyNumber: values.jerseyNumber ?? null,
         position: values.position ?? null,
-        avatarUrl: values.avatarUrl?.trim() || null,
+        avatarUrl: normalizeImageUrl(values.avatarUrl) || null,
         status: values.status ?? "ACTIVE"
       })
     });

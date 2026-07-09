@@ -44,6 +44,7 @@ export type MatchDay = {
 export type PlayerStats = {
   playerId: string;
   name: string;
+  avatarUrl?: string | null;
   internalGoals: number;
   internalAssists: number;
   internalAppearances: number;

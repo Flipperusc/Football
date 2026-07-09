@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { NextResponse } from "next/server";
+import { adminRequiredResponse, hasAdminSession } from "@/lib/server/admin-session";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,8 @@ const allowedTypes = new Map([
 ]);
 
 export async function POST(request: Request) {
+  if (!hasAdminSession()) return adminRequiredResponse();
+
   const formData = await request.formData();
   const file = formData.get("file");
 

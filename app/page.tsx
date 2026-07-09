@@ -34,7 +34,7 @@ import {
 } from "lucide-react";
 import type { MatchDay, Player, PlayerStats, RecentStatChange, Season, TeamPhoto } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
-import { normalizeImageUrl } from "@/lib/image-url";
+import { getDisplayImageUrl } from "@/lib/image-url";
 
 type LoginValues = {
   username: string;
@@ -113,10 +113,12 @@ function PlayerAvatar({
   className: string;
   showJersey?: boolean;
 }) {
+  const avatarSrc = getDisplayImageUrl(player.avatarUrl);
+
   return (
     <span className={className} style={avatarStyle(player.name)}>
-      {player.avatarUrl ? (
-        <img src={player.avatarUrl} alt={player.name} />
+      {avatarSrc ? (
+        <img src={avatarSrc} alt={player.name} />
       ) : (
         avatarLabel(player.name)
       )}
@@ -185,19 +187,23 @@ function RankingBoard({
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无榜单数据" />
       ) : (
         <div className="public-ranking-list">
-          {visibleRows.map((row, index) => (
-            <div className="public-ranking-row" key={row.playerId}>
-              <span className="public-rank-index">{index + 1}</span>
-              <span className="public-mini-avatar" style={avatarStyle(row.name)}>
-                {avatarLabel(row.name)}
-              </span>
-              <span className="public-rank-name">{row.name}</span>
-              <span className="public-rank-value">
-                {formatter(valueGetter(row))}
-                <small>{metricLabel}</small>
-              </span>
-            </div>
-          ))}
+          {visibleRows.map((row, index) => {
+            const avatarSrc = getDisplayImageUrl(row.avatarUrl);
+
+            return (
+              <div className="public-ranking-row" key={row.playerId}>
+                <span className="public-rank-index">{index + 1}</span>
+                <span className="public-mini-avatar" style={avatarStyle(row.name)}>
+                  {avatarSrc ? <img src={avatarSrc} alt={row.name} /> : avatarLabel(row.name)}
+                </span>
+                <span className="public-rank-name">{row.name}</span>
+                <span className="public-rank-value">
+                  {formatter(valueGetter(row))}
+                  <small>{metricLabel}</small>
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
     </section>
@@ -223,14 +229,14 @@ function TeamStyleRail({ photos }: { photos: TeamPhoto[] }) {
       {featured ? (
         <>
           <figure className="team-style-featured">
-            <img src={normalizeImageUrl(featured.imageUrl)} alt={featured.caption ?? "球队风采"} />
+            <img src={getDisplayImageUrl(featured.imageUrl)} alt={featured.caption ?? "球队风采"} />
             {featured.caption ? <figcaption>{featured.caption}</figcaption> : null}
           </figure>
           {previewPhotos.length ? (
             <div className="team-style-photo-grid">
               {previewPhotos.map((photo, index) => (
                 <figure className="team-style-thumb-photo" key={photo.id}>
-                  <img src={normalizeImageUrl(photo.imageUrl)} alt={photo.caption ?? "球队风采"} />
+                  <img src={getDisplayImageUrl(photo.imageUrl)} alt={photo.caption ?? "球队风采"} />
                   {photo.caption ? <figcaption>{photo.caption}</figcaption> : null}
                   {index === previewPhotos.length - 1 && photos.length > 5 ? (
                     <span className="team-style-more">+{photos.length - 5}</span>

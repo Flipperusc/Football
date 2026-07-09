@@ -101,6 +101,7 @@ export async function loadSeasonStats(seasonId: string) {
     id: player.id,
     name: player.name
   }));
+  const avatarUrlByPlayerId = new Map(players.map((player) => [player.id, player.avatarUrl]));
   const typedMatchDays: MatchDayInput[] = matchDays.map((matchDay) => ({
     id: matchDay.id,
     seasonId: matchDay.seasonId,
@@ -172,7 +173,10 @@ export async function loadSeasonStats(seasonId: string) {
       operation: adjustment.operation,
       value: adjustment.value
     }))
-  );
+  ).map((row) => ({
+    ...row,
+    avatarUrl: avatarUrlByPlayerId.get(row.playerId) ?? null
+  }));
 
   return {
     season,
