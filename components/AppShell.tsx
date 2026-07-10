@@ -49,7 +49,7 @@ function selectedKey(pathname: string) {
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
-  if (pathname === "/") {
+  if (pathname === "/" || /^\/matchdays\/[^/]+\/share$/.test(pathname)) {
     return <>{children}</>;
   }
 

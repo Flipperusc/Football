@@ -10,9 +10,9 @@ export function Providers({ children }: { children: ReactNode }) {
       locale={zhCN}
       theme={{
         token: {
-          colorPrimary: "#0f766e",
+          colorPrimary: "#155eef",
           borderRadius: 8,
-          fontFamily: 'Arial, "Microsoft YaHei", sans-serif'
+          fontFamily: '"Segoe UI", "Microsoft YaHei", sans-serif'
         },
         components: {
           Card: { borderRadiusLG: 8 },

@@ -61,13 +61,6 @@ export type PlayerStats = {
   pointsPerInternalAppearance: number;
 };
 
-export type RecentStatChange = {
-  id: string;
-  date: string;
-  description: string;
-  source: "MATCH" | "ADMIN";
-};
-
 export type TeamPhoto = {
   id: string;
   imageUrl: string;

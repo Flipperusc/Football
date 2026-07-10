@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="40" y1="20" x2="1160" y2="610" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#071f4d"/>
+      <stop offset=".52" stop-color="#0b3b91"/>
+      <stop offset="1" stop-color="#2e90fa"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(980 80) rotate(132) scale(520 440)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#78c2ff" stop-opacity=".48"/>
+      <stop offset="1" stop-color="#78c2ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <rect x="34" y="34" width="1132" height="562" rx="34" fill="none" stroke="white" stroke-opacity=".18" stroke-width="2"/>
+  <circle cx="600" cy="315" r="88" fill="none" stroke="white" stroke-opacity=".12" stroke-width="2"/>
+  <path d="M600 34v562M34 315h1132" stroke="white" stroke-opacity=".1" stroke-width="2"/>
+  <rect x="546" y="132" width="108" height="108" rx="30" fill="white" fill-opacity=".12" stroke="white" stroke-opacity=".36" stroke-width="2"/>
+  <text x="600" y="198" fill="white" font-family="Arial, sans-serif" font-size="38" font-weight="800" text-anchor="middle">GPU</text>
+  <text x="600" y="342" fill="white" font-family="Arial, sans-serif" font-size="72" font-weight="900" text-anchor="middle" letter-spacing="-2">LINGMOU GPU</text>
+  <text x="600" y="402" fill="#d8e9ff" font-family="Arial, sans-serif" font-size="25" font-weight="700" text-anchor="middle" letter-spacing="8">FOOTBALL CLUB</text>
+  <rect x="342" y="456" width="516" height="2" rx="1" fill="white" fill-opacity=".28"/>
+  <text x="600" y="510" fill="#e8f2ff" font-family="Arial, sans-serif" font-size="22" font-weight="600" text-anchor="middle" letter-spacing="4">SEASON STATS · MATCH REPORT</text>
+</svg>
