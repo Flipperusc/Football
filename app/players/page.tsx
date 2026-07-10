@@ -9,6 +9,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popconfirm,
   Select,
   Space,
   Table,
@@ -16,7 +17,7 @@ import {
   Upload
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Plus, Save, SlidersHorizontal, UserPlus } from "lucide-react";
+import { Plus, Save, SlidersHorizontal, Trash2, UserPlus } from "lucide-react";
 import { PlayerBulkImport } from "@/components/PlayerBulkImport";
 import type { Player, Season } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
@@ -161,6 +162,7 @@ export default function PlayersPage() {
   const [adjustments, setAdjustments] = useState<StatAdjustment[]>([]);
   const [loading, setLoading] = useState(false);
   const [adjustmentLoading, setAdjustmentLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string>();
   const [editing, setEditing] = useState<Player | null>(null);
   const [adjusting, setAdjusting] = useState<Player | null>(null);
   const [aliasInputs, setAliasInputs] = useState<Record<string, string>>({});
@@ -245,6 +247,21 @@ export default function PlayersPage() {
     await load();
   }
 
+  async function deletePlayer(player: Player) {
+    setDeletingId(player.id);
+    try {
+      await requestJson<{ ok: boolean }>(`/api/players/${player.id}`, {
+        method: "DELETE"
+      });
+      message.success(`已删除球员“${player.name}”`);
+      await load();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "删除球员失败");
+    } finally {
+      setDeletingId(undefined);
+    }
+  }
+
   function openAdjustmentModal(player: Player) {
     const defaultSeasonId = seasons.find((season) => season.status === "ACTIVE")?.id ?? seasons[0]?.id;
     setAdjusting(player);
@@ -321,7 +338,7 @@ export default function PlayersPage() {
     },
     {
       title: "操作",
-      width: 180,
+      width: 280,
       render: (_, player) => (
         <Space>
           <Button
@@ -341,6 +358,18 @@ export default function PlayersPage() {
           <Button icon={<SlidersHorizontal size={16} />} onClick={() => openAdjustmentModal(player)}>
             数据
           </Button>
+          <Popconfirm
+            title={`确定删除球员“${player.name}”吗？`}
+            description="仅可删除没有比赛或人工数据记录的球员，删除后无法恢复。"
+            okText="确认删除"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+            onConfirm={() => deletePlayer(player)}
+          >
+            <Button danger icon={<Trash2 size={16} />} loading={deletingId === player.id}>
+              删除
+            </Button>
+          </Popconfirm>
         </Space>
       )
     }
@@ -404,7 +433,7 @@ export default function PlayersPage() {
       </div>
 
       <div className="section-panel">
-        <Table rowKey="id" loading={loading} columns={columns} dataSource={players} scroll={{ x: 1100 }} />
+        <Table rowKey="id" loading={loading} columns={columns} dataSource={players} scroll={{ x: 1200 }} />
       </div>
 
       <Modal
