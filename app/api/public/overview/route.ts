@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
     const requestedSeasonId = new URL(request.url).searchParams.get("seasonId") ?? undefined;
-    const [seasons, players, photos] = await Promise.all([
+    const [seasons, players, photos, settings] = await Promise.all([
       prisma.season.findMany({ orderBy: { startDate: "desc" } }),
       prisma.player.findMany({
         select: {
@@ -24,7 +24,8 @@ export async function GET(request: Request) {
       prisma.teamPhoto.findMany({
         where: { isActive: true },
         orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }]
-      })
+      }),
+      prisma.teamSetting.findUnique({ where: { id: "default" } })
     ]);
 
     const selectedSeason =
@@ -60,6 +61,7 @@ export async function GET(request: Request) {
       selectedSeasonId: selectedSeason?.id,
       players,
       photos,
+      settings: settings ?? { logoUrl: null },
       stats: seasonData?.playerStats ?? [],
       matches
     });

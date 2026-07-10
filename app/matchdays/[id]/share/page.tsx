@@ -178,7 +178,6 @@ export default function MatchDaySharePage() {
         <div>
           <span className="public-eyebrow">MATCH REPORT</span>
           <h1>赛后战报</h1>
-          <p>公开查看比赛结果，可直接下载高清图片分享到微信群。</p>
         </div>
         <div className="public-share-actions">
           <Button icon={<RefreshCw size={16} />} onClick={load} loading={loading}>刷新</Button>

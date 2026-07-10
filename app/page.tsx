@@ -9,7 +9,7 @@ import {
   Activity, ArrowRight, CalendarCheck2, ChevronDown, ChevronUp, Handshake, Images,
   LockKeyhole, Medal, RefreshCw, Search, Shield, Sparkles, Target, TrendingUp, Trophy, UsersRound
 } from "lucide-react";
-import type { Player, PlayerStats, Season, TeamPhoto } from "@/lib/client-types";
+import type { Player, PlayerStats, Season, TeamPhoto, TeamSetting } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
 import { getDisplayImageUrl } from "@/lib/image-url";
 
@@ -36,6 +36,7 @@ type PublicOverview = {
   selectedSeasonId?: string;
   players: Player[];
   photos: TeamPhoto[];
+  settings: TeamSetting;
   stats: PlayerStats[];
   matches: PublicMatchDaySummary[];
 };
@@ -251,6 +252,7 @@ export default function PublicTeamPage() {
   const stats = overview?.stats ?? [];
   const matchDays = overview?.matches ?? [];
   const teamPhotos = overview?.photos ?? [];
+  const teamLogoUrl = getDisplayImageUrl(overview?.settings.logoUrl);
   const currentSeason = seasons.find((season) => season.id === seasonId);
   const latestMatch = matchDays[0];
 
@@ -402,8 +404,10 @@ export default function PublicTeamPage() {
     <main className="public-page" id="top">
       <header className="public-topbar">
         <a className="public-brand" href="#top" aria-label={TEAM_NAME + " 首页"}>
-          <span className="public-brand-mark"><Trophy size={20} /></span>
-          <span><strong>{TEAM_NAME}</strong><small>FOOTBALL CLUB</small></span>
+          <span className={"public-brand-mark" + (teamLogoUrl ? " has-team-logo" : "")}>
+            {teamLogoUrl ? <img src={teamLogoUrl} alt="" /> : <Trophy size={20} />}
+          </span>
+          <span><strong>{TEAM_NAME}</strong><small>球队数据统计</small></span>
         </a>
         <nav className="public-nav" aria-label="前台导航">
           <a href="#rankings">榜单</a>
@@ -416,8 +420,15 @@ export default function PublicTeamPage() {
       <section className="public-hero" style={heroStyle}>
         <div className="public-hero-copy">
           <span className="public-season-badge"><Sparkles size={14} />{currentSeason?.name ?? "球队数据中心"}</span>
-          <h1>让每一次上场<br />都有记录</h1>
-          <p>查看灵眸GPU的赛季积分、进球、助攻与出勤表现，见证球队每一场成长。</p>
+          <div className="public-hero-identity">
+            <div>
+              <h1>{TEAM_NAME}</h1>
+              <p>球队数据统计</p>
+            </div>
+            <div className={"public-hero-logo" + (teamLogoUrl ? "" : " is-placeholder")}>
+              {teamLogoUrl ? <img src={teamLogoUrl} alt="灵眸GPU 球队 Logo" /> : <Trophy size={54} aria-label="球队 Logo 占位图" />}
+            </div>
+          </div>
           <div className="public-hero-actions">
             <a className="public-primary-link" href="#rankings">查看赛季榜单 <ArrowRight size={16} /></a>
             <a className="public-secondary-link" href="#players">寻找球员</a>
@@ -605,7 +616,12 @@ export default function PublicTeamPage() {
       )}
 
       <footer className="public-footer">
-        <div className="public-brand public-footer-brand"><span className="public-brand-mark"><Trophy size={18} /></span><span><strong>{TEAM_NAME}</strong><small>FOOTBALL CLUB</small></span></div>
+        <div className="public-brand public-footer-brand">
+          <span className={"public-brand-mark" + (teamLogoUrl ? " has-team-logo" : "")}>
+            {teamLogoUrl ? <img src={teamLogoUrl} alt="" /> : <Trophy size={18} />}
+          </span>
+          <span><strong>{TEAM_NAME}</strong><small>球队数据统计</small></span>
+        </div>
         <p>所有榜单均根据已确认比赛事件实时计算。</p>
         <Button type="text" icon={<RefreshCw size={14} />} onClick={() => load(seasonId)} loading={loading}>刷新数据</Button>
       </footer>

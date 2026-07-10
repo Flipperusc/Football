@@ -71,6 +71,10 @@ export type TeamPhoto = {
   updatedAt: string;
 };
 
+export type TeamSetting = {
+  logoUrl?: string | null;
+};
+
 export async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
