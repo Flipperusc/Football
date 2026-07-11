@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { matchDayUpdateSchema } from "@/lib/validations";
+import { apiErrorResponse } from "@/lib/server/api-error";
 
 export async function GET(_: Request, { params }: { params: { id: string } }) {
   const matchDay = await prisma.matchDay.findUnique({
@@ -47,4 +48,22 @@ export async function PATCH(request: Request, { params }: { params: { id: string
     });
   });
   return NextResponse.json(matchDay);
+}
+
+export async function DELETE(_: Request, { params }: { params: { id: string } }) {
+  try {
+    const matchDay = await prisma.matchDay.findUnique({
+      where: { id: params.id },
+      select: { id: true }
+    });
+
+    if (!matchDay) {
+      return NextResponse.json({ message: "\u6bd4\u8d5b\u5f55\u5165\u4e0d\u5b58\u5728\u6216\u5df2\u88ab\u5220\u9664" }, { status: 404 });
+    }
+
+    await prisma.matchDay.delete({ where: { id: params.id } });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return apiErrorResponse(error, "\u5220\u9664\u6bd4\u8d5b\u5f55\u5165\u5931\u8d25");
+  }
 }

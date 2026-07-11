@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { App, Button, Empty, Select, Table, Tag, Upload } from "antd";
-import { ImagePlus, Plus, RefreshCw, Save } from "lucide-react";
+import { App, Button, Empty, Popconfirm, Select, Table, Tag, Upload } from "antd";
+import { ImagePlus, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import type { MatchDay, Player, PlayerStats, Season, TeamSetting } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
@@ -75,6 +75,7 @@ export default function AdminDashboardPage() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [matchDays, setMatchDays] = useState<MatchDay[]>([]);
+  const [deletingMatchDayId, setDeletingMatchDayId] = useState<string>();
   const [stats, setStats] = useState<PlayerStats[]>([]);
   const [seasonId, setSeasonId] = useState<string>();
   const [logoDraft, setLogoDraft] = useState<string>();
@@ -139,6 +140,21 @@ export default function AdminDashboardPage() {
     }
   }
 
+  async function deleteMatchDay(matchDay: MatchDay) {
+    setDeletingMatchDayId(matchDay.id);
+    try {
+      await requestJson<{ ok: true }>(`/api/matchdays/${matchDay.id}`, {
+        method: "DELETE"
+      });
+      message.success(`${matchDay.date.slice(0, 10)} \u7684${matchDay.type === "INTERNAL" ? "\u961f\u5185\u8d5b" : "\u961f\u5916\u8d5b"}\u5f55\u5165\u5df2\u5220\u9664`);
+      await load(seasonId);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "\u5220\u9664\u6bd4\u8d5b\u5f55\u5165\u5931\u8d25");
+    } finally {
+      setDeletingMatchDayId(undefined);
+    }
+  }
+
   const confirmedMatchDays = useMemo(
     () => matchDays.filter((matchDay) => matchDay.parseStatus === "CONFIRMED").length,
     [matchDays]
@@ -153,6 +169,62 @@ export default function AdminDashboardPage() {
     { title: "队内积分", dataIndex: "internalSeasonPoints", width: 110 }
   ];
 
+
+  const matchDayColumns: ColumnsType<MatchDay> = [
+    {
+      title: "\u6bd4\u8d5b\u65e5\u671f",
+      dataIndex: "date",
+      width: 130,
+      render: (date: string) => date.slice(0, 10)
+    },
+    {
+      title: "\u8d5b\u5b63",
+      width: 180,
+      render: (_, matchDay) => matchDay.season?.name ?? "-"
+    },
+    {
+      title: "\u7c7b\u578b",
+      width: 100,
+      render: (_, matchDay) => (
+        <Tag color={matchDay.type === "INTERNAL" ? "blue" : "cyan"}>
+          {matchDay.type === "INTERNAL" ? "\u961f\u5185\u8d5b" : "\u961f\u5916\u8d5b"}
+        </Tag>
+      )
+    },
+    {
+      title: "\u72b6\u6001",
+      width: 110,
+      render: (_, matchDay) => {
+        const statusMap = {
+          PENDING: { label: "\u5f85\u89e3\u6790", color: "default" },
+          PARSED: { label: "\u5f85\u786e\u8ba4", color: "gold" },
+          CONFIRMED: { label: "\u5df2\u5165\u5e93", color: "green" },
+          FAILED: { label: "\u89e3\u6790\u5931\u8d25", color: "red" }
+        } as const;
+        const status = statusMap[matchDay.parseStatus];
+        return <Tag color={status.color}>{status.label}</Tag>;
+      }
+    },
+    {
+      title: "\u64cd\u4f5c",
+      width: 110,
+      fixed: "right",
+      render: (_, matchDay) => (
+        <Popconfirm
+          title={`\u786e\u5b9a\u5220\u9664 ${matchDay.date.slice(0, 10)} \u7684${matchDay.type === "INTERNAL" ? "\u961f\u5185\u8d5b" : "\u961f\u5916\u8d5b"}\u5f55\u5165\u5417\uff1f`}
+          description="\u8be5\u573a\u7684\u6bd4\u5206\u3001\u8fdb\u7403\u3001\u52a9\u653b\u3001\u51fa\u52e4\u3001\u79ef\u5206\u3001\u5956\u9879\u548c\u89e3\u6790\u8bb0\u5f55\u5c06\u4e00\u5e76\u5220\u9664\uff0c\u4e14\u65e0\u6cd5\u6062\u590d\u3002"
+          okText="\u786e\u8ba4\u5220\u9664"
+          cancelText="\u53d6\u6d88"
+          okButtonProps={{ danger: true }}
+          onConfirm={() => deleteMatchDay(matchDay)}
+        >
+          <Button danger size="small" icon={<Trash2 size={15} />} loading={deletingMatchDayId === matchDay.id}>
+            {"\u5220\u9664"}
+          </Button>
+        </Popconfirm>
+      )
+    }
+  ];
   return (
     <>
       <div className="page-title">
@@ -216,6 +288,24 @@ export default function AdminDashboardPage() {
           <span>已确认</span>
           <strong>{confirmedMatchDays}</strong>
         </div>
+      </div>
+
+      <div className="section-panel">
+        <Table
+          rowKey="id"
+          loading={loading}
+          columns={matchDayColumns}
+          dataSource={matchDays}
+          pagination={{ pageSize: 8, hideOnSinglePage: true }}
+          scroll={{ x: 720 }}
+          locale={{ emptyText: "\u6682\u65e0\u6bd4\u8d5b\u5f55\u5165" }}
+          title={() => (
+            <div className="toolbar" style={{ marginBottom: 0 }}>
+              <Tag color="blue">{"\u6bd4\u8d5b\u5f55\u5165\u7ba1\u7406"}</Tag>
+              <span className="muted-text">{"\u5220\u9664\u9519\u8bef\u5f55\u5165\u540e\uff0c\u699c\u5355\u4f1a\u6309\u5269\u4f59\u6bd4\u8d5b\u6570\u636e\u91cd\u65b0\u8ba1\u7b97"}</span>
+            </div>
+          )}
+        />
       </div>
 
       <div className="section-panel">
