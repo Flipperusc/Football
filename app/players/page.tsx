@@ -22,6 +22,10 @@ import { PlayerBulkImport } from "@/components/PlayerBulkImport";
 import type { Player, Season } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
 import { getDisplayImageUrl, normalizeImageUrl } from "@/lib/image-url";
+import {
+  formatStatAdjustmentValue,
+  statAdjustmentMetricLabels
+} from "@/lib/stat-adjustments";
 
 type PlayerFormValues = {
   name: string;
@@ -63,18 +67,16 @@ type StatAdjustment = {
 };
 
 const metricOptions: { label: string; value: StatMetric }[] = [
-  { label: "队内进球数", value: "INTERNAL_GOALS" },
-  { label: "队内助攻数", value: "INTERNAL_ASSISTS" },
-  { label: "队内出勤", value: "INTERNAL_APPEARANCES" },
   { label: "队内赛积分", value: "INTERNAL_SEASON_POINTS" },
-  { label: "队外进球数", value: "EXTERNAL_GOALS" },
-  { label: "队外助攻数", value: "EXTERNAL_ASSISTS" },
+  { label: "队内进球", value: "INTERNAL_GOALS" },
+  { label: "队内助攻", value: "INTERNAL_ASSISTS" },
+  { label: "队外进球", value: "EXTERNAL_GOALS" },
+  { label: "队外助攻", value: "EXTERNAL_ASSISTS" },
+  { label: "队内出勤", value: "INTERNAL_APPEARANCES" },
   { label: "队外出勤", value: "EXTERNAL_APPEARANCES" }
 ];
 
-const metricLabels = Object.fromEntries(
-  metricOptions.map((item) => [item.value, item.label])
-) as Record<StatMetric, string>;
+const metricLabels = statAdjustmentMetricLabels as Record<StatMetric, string>;
 
 function avatarLabel(player: Player) {
   return Array.from(player.name.trim()).slice(0, 2).join("") || "球";
@@ -267,9 +269,9 @@ export default function PlayersPage() {
     setAdjusting(player);
     adjustmentForm.setFieldsValue({
       seasonId: defaultSeasonId,
-      metric: "INTERNAL_GOALS",
-      operation: "SET",
-      value: 0,
+      metric: "INTERNAL_SEASON_POINTS",
+      operation: "ADJUST",
+      value: 1,
       reason: ""
     });
     void loadAdjustments(player.id, defaultSeasonId);
@@ -281,8 +283,8 @@ export default function PlayersPage() {
       method: "POST",
       body: JSON.stringify(values)
     });
-    message.success("已保存数据调整");
-    adjustmentForm.setFieldsValue({ reason: "" });
+    message.success("手动数据变动已保存");
+    adjustmentForm.setFieldsValue({ value: 1, reason: "" });
     await loadAdjustments(adjusting.id, values.seasonId);
   }
 
@@ -356,7 +358,7 @@ export default function PlayersPage() {
             编辑
           </Button>
           <Button icon={<SlidersHorizontal size={16} />} onClick={() => openAdjustmentModal(player)}>
-            数据
+            手动加减
           </Button>
           <Popconfirm
             title={`确定删除球员“${player.name}”吗？`}
@@ -381,7 +383,9 @@ export default function PlayersPage() {
     { title: "指标", dataIndex: "metric", render: (metric: StatMetric) => metricLabels[metric] },
     {
       title: "操作",
-      render: (_, row) => (row.operation === "SET" ? `设置为 ${row.value}` : `调整 ${row.value}`)
+      render: (_, row) => (
+        <Tag color={row.operation === "ADJUST" && row.value < 0 ? "red" : "blue"}>{formatStatAdjustmentValue(row.operation, row.value)}</Tag>
+      )
     },
     { title: "原因", dataIndex: "reason" }
   ];
@@ -471,7 +475,7 @@ export default function PlayersPage() {
       </Modal>
 
       <Modal
-        title={adjusting ? `调整数据：${adjusting.name}` : "调整数据"}
+        title={adjusting ? `手动加减数据：${adjusting.name}` : "手动加减数据"}
         open={Boolean(adjusting)}
         onCancel={() => setAdjusting(null)}
         footer={null}
@@ -494,12 +498,12 @@ export default function PlayersPage() {
             <Form.Item name="operation" label="方式" rules={[{ required: true }]}>
               <Select
                 options={[
-                  { label: "设置为", value: "SET" },
-                  { label: "增加/减少", value: "ADJUST" }
+                  { label: "增加/减少", value: "ADJUST" },
+                  { label: "直接设置为", value: "SET" }
                 ]}
               />
             </Form.Item>
-            <Form.Item name="value" label="数值" rules={[{ required: true }]}>
+            <Form.Item name="value" label="加减数值" extra="输入正数增加，输入负数减少，例如 +2 填 2，-1 填 -1" rules={[{ required: true }]}>
               <InputNumber style={{ width: "100%" }} />
             </Form.Item>
           </div>
@@ -507,7 +511,7 @@ export default function PlayersPage() {
             <Input.TextArea rows={2} placeholder="例如：补录 7.5 队内赛第一节进球" />
           </Form.Item>
           <Button type="primary" htmlType="submit" icon={<Save size={16} />}>
-            保存数据调整
+            保存变动记录
           </Button>
         </Form>
 

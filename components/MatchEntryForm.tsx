@@ -74,6 +74,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
   const [submitting, setSubmitting] = useState(false);
   const [recognizing, setRecognizing] = useState(false);
   const [editingMatchDayId, setEditingMatchDayId] = useState<string>();
+  const [editingConfirmedMatch, setEditingConfirmedMatch] = useState(false);
   const [aliasPlayerId, setAliasPlayerId] = useState<string>();
   const [aliasText, setAliasText] = useState("");
   const [aliasSaving, setAliasSaving] = useState(false);
@@ -115,7 +116,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
         }
 
         if (matchRow.type !== type) throw new Error("比赛类型与当前录入页面不一致");
-        if (matchRow.parseStatus === "CONFIRMED") throw new Error("已确认入库的比赛不能返回重新解析");
+        setEditingConfirmedMatch(matchRow.parseStatus === "CONFIRMED");
 
         setEditingMatchDayId(matchRow.id);
         form.setFieldsValue({
@@ -407,10 +408,14 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
 
       {editingMatchDayId ? (
         <Alert
-          type="info"
+          type={editingConfirmedMatch ? "warning" : "info"}
           showIcon
-          message="正在修改已解析的比赛日"
-          description="保存后会更新当前比赛日并生成新的解析结果，不会创建重复记录。"
+          message={editingConfirmedMatch ? "正在修改已入库的比赛" : "正在修改已解析的比赛日"}
+          description={
+            editingConfirmedMatch
+              ? "保存后会重新解析；确认入库时将覆盖这场比赛原有的比分、进球、助攻、积分和奖项，不会重复累计。"
+              : "保存后会更新当前比赛日并生成新的解析结果，不会创建重复记录。"
+          }
           style={{ marginBottom: 12 }}
         />
       ) : null}
@@ -512,7 +517,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
       </Form.Item>
 
       <Button type="primary" htmlType="submit" icon={<Wand2 size={16} />} loading={submitting}>
-        保存并解析
+        {editingMatchDayId ? "保存修改并重新解析" : "保存并解析"}
       </Button>
       <Button
         style={{ marginLeft: 8 }}

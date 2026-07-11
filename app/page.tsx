@@ -12,6 +12,7 @@ import {
 import type { Player, PlayerStats, Season, TeamPhoto, TeamSetting } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
 import { getDisplayImageUrl } from "@/lib/image-url";
+import type { PlayerActivity } from "@/lib/stats/player-activity";
 
 type LoginValues = { username: string; password: string };
 type TeamResultSummary = {
@@ -38,6 +39,7 @@ type PublicOverview = {
   photos: TeamPhoto[];
   settings: TeamSetting;
   stats: PlayerStats[];
+  activities: PlayerActivity[];
   matches: PublicMatchDaySummary[];
 };
 type RankingScope = "all" | "internal" | "external";
@@ -250,6 +252,7 @@ export default function PublicTeamPage() {
   const seasons = overview?.seasons ?? [];
   const players = overview?.players ?? [];
   const stats = overview?.stats ?? [];
+  const activities = overview?.activities ?? [];
   const matchDays = overview?.matches ?? [];
   const teamPhotos = overview?.photos ?? [];
   const teamLogoUrl = getDisplayImageUrl(overview?.settings.logoUrl);
@@ -400,6 +403,9 @@ export default function PublicTeamPage() {
   }
 
   const selectedStats = selectedPlayer ? statsByPlayerId.get(selectedPlayer.id) : undefined;
+  const selectedActivities = selectedPlayer
+    ? activities.filter((activity) => activity.playerId === selectedPlayer.id).slice(0, 12)
+    : [];
   return (
     <main className="public-page" id="top">
       <header className="public-topbar">
@@ -665,6 +671,29 @@ export default function PublicTeamPage() {
               <div><span>出勤</span><strong>{selectedStats?.externalAppearances ?? 0}</strong></div>
               <div><span>总场均进球</span><strong>{formatRate(selectedStats?.goalsPerAppearance)}</strong></div>
             </div>
+            <h3 className="public-detail-title">最近数据变动</h3>
+            {selectedActivities.length > 0 ? (
+              <div className="public-adjustment-list">
+                {selectedActivities.map((activity) => (
+                  <div className="public-adjustment-item" key={activity.id}>
+                    <div className="public-adjustment-heading">
+                      <strong>{activity.description}</strong>
+                      <span
+                        className={
+                          "public-adjustment-value " +
+                          (activity.changeLabel.includes("-") ? "is-negative" : "is-positive")
+                        }
+                      >
+                        {activity.changeLabel}
+                      </span>
+                    </div>
+                    <time>{activity.kind === "MANUAL" ? "人工调整" : "比赛记录"}</time>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="public-adjustment-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="本赛季暂无积分、进球或助攻变动" /></div>
+            )}
           </>
         ) : null}
       </Drawer>

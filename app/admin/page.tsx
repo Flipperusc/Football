@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { App, Button, Empty, Popconfirm, Select, Table, Tag, Upload } from "antd";
-import { ImagePlus, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { App, Button, Empty, Popconfirm, Select, Space, Table, Tag, Upload } from "antd";
+import { ImagePlus, Pencil, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import type { MatchDay, Player, PlayerStats, Season, TeamSetting } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
@@ -206,22 +206,33 @@ export default function AdminDashboardPage() {
       }
     },
     {
-      title: "\u64cd\u4f5c",
-      width: 110,
+      title: "操作",
+      width: 190,
       fixed: "right",
       render: (_, matchDay) => (
-        <Popconfirm
-          title={`\u786e\u5b9a\u5220\u9664 ${matchDay.date.slice(0, 10)} \u7684${matchDay.type === "INTERNAL" ? "\u961f\u5185\u8d5b" : "\u961f\u5916\u8d5b"}\u5f55\u5165\u5417\uff1f`}
-          description="\u8be5\u573a\u7684\u6bd4\u5206\u3001\u8fdb\u7403\u3001\u52a9\u653b\u3001\u51fa\u52e4\u3001\u79ef\u5206\u3001\u5956\u9879\u548c\u89e3\u6790\u8bb0\u5f55\u5c06\u4e00\u5e76\u5220\u9664\uff0c\u4e14\u65e0\u6cd5\u6062\u590d\u3002"
-          okText="\u786e\u8ba4\u5220\u9664"
-          cancelText="\u53d6\u6d88"
-          okButtonProps={{ danger: true }}
-          onConfirm={() => deleteMatchDay(matchDay)}
-        >
-          <Button danger size="small" icon={<Trash2 size={15} />} loading={deletingMatchDayId === matchDay.id}>
-            {"\u5220\u9664"}
-          </Button>
-        </Popconfirm>
+        <Space size="small">
+          <Link
+            href={
+              matchDay.parseStatus === "PARSED" || matchDay.parseStatus === "CONFIRMED"
+                ? `/matchdays/${matchDay.id}/confirm`
+                : `${matchDay.type === "INTERNAL" ? "/matchdays/internal" : "/matchdays/external"}?edit=${matchDay.id}`
+            }
+          >
+            <Button size="small" icon={<Pencil size={15} />}>修改</Button>
+          </Link>
+          <Popconfirm
+            title={`确定删除 ${matchDay.date.slice(0, 10)} 的${matchDay.type === "INTERNAL" ? "队内赛" : "队外赛"}录入吗？`}
+            description="该场的比分、进球、助攻、出勤、积分、奖项和解析记录将一并删除，且无法恢复。"
+            okText="确认删除"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+            onConfirm={() => deleteMatchDay(matchDay)}
+          >
+            <Button danger size="small" icon={<Trash2 size={15} />} loading={deletingMatchDayId === matchDay.id}>
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
       )
     }
   ];

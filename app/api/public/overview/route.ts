@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { apiErrorResponse } from "@/lib/server/api-error";
 import { loadSeasonStats } from "@/lib/server/stats";
+import { buildPlayerActivities } from "@/lib/stats/player-activity";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +33,25 @@ export async function GET(request: Request) {
       seasons.find((season) => season.id === requestedSeasonId) ??
       seasons.find((season) => season.status === "ACTIVE") ??
       seasons[0];
-    const seasonData = selectedSeason ? await loadSeasonStats(selectedSeason.id) : null;
+    const [seasonData, adjustments] = selectedSeason
+      ? await Promise.all([
+          loadSeasonStats(selectedSeason.id),
+          prisma.playerStatAdjustment.findMany({
+            where: { seasonId: selectedSeason.id },
+            select: {
+              id: true,
+              playerId: true,
+              seasonId: true,
+              metric: true,
+              operation: true,
+              value: true,
+              reason: true,
+              createdAt: true
+            },
+            orderBy: { createdAt: "desc" }
+          })
+        ])
+      : [null, []];
 
     const matches = (seasonData?.matchDays ?? [])
       .slice()
@@ -56,6 +75,8 @@ export async function GET(request: Request) {
           }))
       }));
 
+    const activities = buildPlayerActivities(seasonData?.matchDays ?? [], adjustments);
+
     return NextResponse.json({
       seasons,
       selectedSeasonId: selectedSeason?.id,
@@ -63,6 +84,7 @@ export async function GET(request: Request) {
       photos,
       settings: settings ?? { logoUrl: null },
       stats: seasonData?.playerStats ?? [],
+      activities,
       matches
     });
   } catch (error) {

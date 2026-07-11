@@ -82,6 +82,7 @@ export async function loadSeasonStats(seasonId: string) {
       where: { seasonId, parseStatus: "CONFIRMED" },
       include: {
         assignments: true,
+        internalGames: true,
         goalEvents: true,
         playerPoints: true,
         teamResults: true,

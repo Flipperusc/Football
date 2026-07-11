@@ -1596,6 +1596,67 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
+
+.public-adjustment-list {
+  display: grid;
+  gap: 10px;
+}
+
+.public-adjustment-item {
+  border: 1px solid #dfe7f2;
+  border-radius: 13px;
+  padding: 13px 14px;
+  background: #f9fbfd;
+}
+
+.public-adjustment-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.public-adjustment-heading strong {
+  color: #204675;
+  font-size: 14px;
+}
+
+.public-adjustment-value {
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.public-adjustment-value.is-positive {
+  color: #067647;
+  background: #dcfae6;
+}
+
+.public-adjustment-value.is-negative {
+  color: #b42318;
+  background: #fee4e2;
+}
+
+.public-adjustment-item p {
+  margin: 8px 0 5px;
+  color: #526b8c;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.public-adjustment-item time {
+  color: #8b9bb0;
+  font-size: 11px;
+}
+
+.public-adjustment-empty {
+  border: 1px dashed #d7e1ef;
+  border-radius: 13px;
+  padding: 8px;
+  background: #fbfcfe;
+}
 @media (max-width: 1020px) {
   .public-hero {
     grid-template-columns: minmax(0, 1fr) 330px;
