@@ -17,7 +17,7 @@ import {
   Typography
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Plus, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, Plus, Save, Trash2 } from "lucide-react";
 import type { MatchDay, Player } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
 
@@ -59,11 +59,26 @@ type BonusPoint = {
   rawText: string;
 };
 
+type ParsedAward = {
+  name: string;
+  players: PlayerRef[];
+  points: number;
+  rawText: string;
+};
+
+type AwardRow = {
+  key: string;
+  awardIndex: number;
+  playerIndex: number;
+  award: ParsedAward;
+  player: PlayerRef;
+};
+
 type ParsedMatch = {
   matchType: "internal" | "external";
   games?: ParsedGame[];
   events?: ParsedEvent[];
-  awards?: unknown[];
+  awards?: ParsedAward[];
   bonusPoints?: BonusPoint[];
   uncertainItems?: { rawText: string; reason: string }[];
 };
@@ -197,6 +212,29 @@ export default function ConfirmMatchDayPage() {
     }));
   }, [parsed]);
 
+  const awardRows = useMemo<AwardRow[]>(() =>
+    (parsed?.awards ?? []).flatMap((award, awardIndex) => {
+      if (award.players.length === 0) {
+        return [{
+          key: `award-${awardIndex}-empty`,
+          awardIndex,
+          playerIndex: -1,
+          award,
+          player: playerRefFromId(null, [])
+        }];
+      }
+
+      return award.players.map((player, playerIndex) => ({
+        key: `award-${awardIndex}-${playerIndex}`,
+        awardIndex,
+        playerIndex,
+        award,
+        player
+      }));
+    }),
+    [parsed]
+  );
+
   function updateParsed(mutator: (next: ParsedMatch) => void) {
     setParsed((current) => {
       if (!current) return current;
@@ -287,6 +325,49 @@ export default function ConfirmMatchDayPage() {
     });
   }
 
+  function updateAward(row: AwardRow, patch: Partial<ParsedAward>) {
+    updateParsed((next) => {
+      if (!next.awards?.[row.awardIndex]) return;
+      next.awards[row.awardIndex] = { ...next.awards[row.awardIndex], ...patch };
+    });
+  }
+
+  function updateAwardPlayer(row: AwardRow, playerId: string) {
+    updateParsed((next) => {
+      const award = next.awards?.[row.awardIndex];
+      if (!award) return;
+      const player = playerRefFromId(playerId, players, row.player.rawName);
+      if (row.playerIndex < 0) award.players.push(player);
+      else award.players[row.playerIndex] = player;
+    });
+  }
+
+  function deleteAwardRow(row: AwardRow) {
+    updateParsed((next) => {
+      const award = next.awards?.[row.awardIndex];
+      if (!award) return;
+      if (row.playerIndex < 0 || award.players.length <= 1) {
+        next.awards?.splice(row.awardIndex, 1);
+      } else {
+        award.players.splice(row.playerIndex, 1);
+      }
+    });
+  }
+
+  function addAward() {
+    updateParsed((next) => {
+      next.awards = [
+        ...(next.awards ?? []),
+        {
+          name: "最佳后卫",
+          players: [playerRefFromId(null, players)],
+          points: 0,
+          rawText: ""
+        }
+      ];
+    });
+  }
+
   function addAliasDraft() {
     if (!aliasDraft.playerId || !aliasDraft.rawName.trim()) return;
     setAliasDrafts((current) => [...current, aliasDraft]);
@@ -299,10 +380,19 @@ export default function ConfirmMatchDayPage() {
     if (events.some((event) => !event.scorer.playerId)) {
       return "仍有进球球员没有匹配，请先在表格里选择球员";
     }
+    if ((parsed.awards ?? []).some((award) => award.players.length === 0 || award.players.some((player) => !player.playerId))) {
+      return "仍有奖项球员没有匹配，请先在奖项表里选择球员";
+    }
     if ((parsed.bonusPoints ?? []).some((bonus) => !bonus.player.playerId)) {
       return "仍有加分球员没有匹配，请先在加分表里选择球员";
     }
     return null;
+  }
+
+  function returnToEdit() {
+    if (!matchDay) return;
+    const entryPath = matchDay.type === "INTERNAL" ? "/matchdays/internal" : "/matchdays/external";
+    router.push(`${entryPath}?edit=${params.id}`);
   }
 
   async function confirm() {
@@ -470,6 +560,51 @@ export default function ConfirmMatchDayPage() {
     }
   ];
 
+  const awardColumns: ColumnsType<AwardRow> = [
+    {
+      title: "奖项",
+      width: 180,
+      render: (_, row) => (
+        <Input
+          value={row.award.name}
+          onChange={(event) => updateAward(row, { name: event.target.value })}
+        />
+      )
+    },
+    {
+      title: "获奖球员",
+      width: 220,
+      render: (_, row) => (
+        <Select
+          showSearch
+          optionFilterProp="label"
+          style={{ width: 200 }}
+          value={row.player.playerId ?? undefined}
+          options={playerOptions}
+          status={!row.player.playerId ? "error" : undefined}
+          placeholder="选择最佳后卫"
+          onChange={(playerId) => updateAwardPlayer(row, playerId)}
+        />
+      )
+    },
+    {
+      title: "原文",
+      render: (_, row) => (
+        <Input
+          value={row.award.rawText}
+          onChange={(event) => updateAward(row, { rawText: event.target.value })}
+        />
+      )
+    },
+    {
+      title: "操作",
+      width: 80,
+      render: (_, row) => (
+        <Button danger icon={<Trash2 size={16} />} onClick={() => deleteAwardRow(row)} />
+      )
+    }
+  ];
+
   const bonusColumns: ColumnsType<BonusPoint> = [
     {
       title: "球员",
@@ -517,9 +652,14 @@ export default function ConfirmMatchDayPage() {
           <h1>AI 解析确认</h1>
           <p>解析结果已转换成表格，可直接修改比分、进球、助攻和球员匹配后确认入库</p>
         </div>
-        <Button type="primary" icon={<Save size={16} />} onClick={confirm} loading={saving}>
-          确认入库
-        </Button>
+        <Space>
+          <Button icon={<ArrowLeft size={16} />} onClick={returnToEdit} disabled={!matchDay}>
+            返回修改
+          </Button>
+          <Button type="primary" icon={<Save size={16} />} onClick={confirm} loading={saving}>
+            确认入库
+          </Button>
+        </Space>
       </div>
 
       {loadError ? <Alert type="error" showIcon message="加载失败" description={loadError} style={{ marginBottom: 16 }} /> : null}
@@ -580,6 +720,24 @@ export default function ConfirmMatchDayPage() {
           </Button>
         </div>
         <Table rowKey="key" loading={loading} columns={eventColumns} dataSource={eventRows} pagination={false} scroll={{ x: 1100 }} />
+      </div>
+
+      <div className="section-panel">
+        <div className="toolbar">
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            奖项与最佳后卫
+          </Typography.Title>
+          <Button icon={<Plus size={16} />} onClick={addAward}>
+            新增最佳后卫
+          </Button>
+        </div>
+        <Table
+          rowKey="key"
+          columns={awardColumns}
+          dataSource={awardRows}
+          pagination={false}
+          locale={{ emptyText: "赛后文本中未解析到最佳后卫" }}
+        />
       </div>
 
       <div className="section-panel">

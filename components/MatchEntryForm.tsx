@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, App, Button, Form, Input, Select, Space, Tag } from "antd";
-import { Send, Wand2, UsersRound } from "lucide-react";
-import type { Player, Season } from "@/lib/client-types";
+import { Plus, Send, Wand2, UsersRound } from "lucide-react";
+import type { MatchDay, Player, Season } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
 
 type TeamColor = "RED" | "BLUE" | "WHITE" | "EXTERNAL";
@@ -73,6 +73,10 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [recognizing, setRecognizing] = useState(false);
+  const [editingMatchDayId, setEditingMatchDayId] = useState<string>();
+  const [aliasPlayerId, setAliasPlayerId] = useState<string>();
+  const [aliasText, setAliasText] = useState("");
+  const [aliasSaving, setAliasSaving] = useState(false);
   const [recognizeWarning, setRecognizeWarning] = useState<string>();
   const [rosterText, setRosterText] = useState("");
   const [externalRosterText, setExternalRosterText] = useState("");
@@ -90,22 +94,62 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
   useEffect(() => {
     async function load() {
       try {
-        const [playerRows, seasonRows] = await Promise.all([
+        const editId =
+          typeof window === "undefined"
+            ? undefined
+            : new URLSearchParams(window.location.search).get("edit") ?? undefined;
+        const [playerRows, seasonRows, matchRow] = await Promise.all([
           requestJson<Player[]>("/api/players"),
-          requestJson<Season[]>("/api/seasons")
+          requestJson<Season[]>("/api/seasons"),
+          editId ? requestJson<MatchDay>(`/api/matchdays/${editId}`) : Promise.resolve(null)
         ]);
         setPlayers(playerRows);
         setSeasons(seasonRows);
+
+        if (!matchRow) {
+          form.setFieldsValue({
+            date: todayInput(),
+            seasonId: seasonRows.find((season) => season.status === "ACTIVE")?.id ?? seasonRows[0]?.id
+          });
+          return;
+        }
+
+        if (matchRow.type !== type) throw new Error("比赛类型与当前录入页面不一致");
+        if (matchRow.parseStatus === "CONFIRMED") throw new Error("已确认入库的比赛不能返回重新解析");
+
+        setEditingMatchDayId(matchRow.id);
         form.setFieldsValue({
-          date: todayInput(),
-          seasonId: seasonRows.find((season) => season.status === "ACTIVE")?.id ?? seasonRows[0]?.id
+          seasonId: matchRow.seasonId,
+          date: matchRow.date.slice(0, 10),
+          rawText: matchRow.rawText ?? ""
         });
+
+        if (type === "INTERNAL") {
+          const nextTeamPlayers: Record<InternalTeamColor, string[]> = { RED: [], BLUE: [], WHITE: [] };
+          const nextGoalkeepers: Record<InternalTeamColor, string | undefined> = {
+            RED: undefined,
+            BLUE: undefined,
+            WHITE: undefined
+          };
+          for (const assignment of matchRow.assignments ?? []) {
+            if (!isInternalTeam(assignment.teamColor)) continue;
+            if (assignment.role === "GOALKEEPER") nextGoalkeepers[assignment.teamColor] = assignment.playerId;
+            else nextTeamPlayers[assignment.teamColor].push(assignment.playerId);
+          }
+          setTeamPlayers(nextTeamPlayers);
+          setGoalkeepers(nextGoalkeepers);
+        } else {
+          form.setFieldValue(
+            "externalPlayers",
+            (matchRow.assignments ?? []).map((assignment) => assignment.playerId)
+          );
+        }
       } catch (error) {
         message.error(error instanceof Error ? error.message : "加载基础数据失败");
       }
     }
     void load();
-  }, [form, message]);
+  }, [form, message, type]);
 
   const playerOptions = useMemo(
     () => players.map((player) => ({ label: player.name, value: player.id })),
@@ -149,6 +193,38 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
       method: "POST",
       body: JSON.stringify({ rawText, matchType })
     });
+  }
+
+  async function addAlias() {
+    const alias = aliasText.trim();
+    if (!aliasPlayerId || !alias) {
+      message.warning("请选择球员并填写别名");
+      return;
+    }
+
+    setAliasSaving(true);
+    try {
+      const savedAlias = await requestJson<{ id: string; alias: string; aliasType: string }>(
+        `/api/players/${aliasPlayerId}/aliases`,
+        {
+          method: "POST",
+          body: JSON.stringify({ alias, aliasType: "MANUAL" })
+        }
+      );
+      setPlayers((current) =>
+        current.map((player) =>
+          player.id === aliasPlayerId
+            ? { ...player, aliases: [...(player.aliases ?? []), savedAlias] }
+            : player
+        )
+      );
+      setAliasText("");
+      message.success("别名已保存，可立即重新识别球队名单");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "保存别名失败");
+    } finally {
+      setAliasSaving(false);
+    }
   }
 
   async function recognizeInternalRoster() {
@@ -240,16 +316,27 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
     }
     setSubmitting(true);
     try {
-      const matchDay = await requestJson<{ id: string }>("/api/matchdays", {
-        method: "POST",
-        body: JSON.stringify({
-          seasonId: values.seasonId,
-          date: values.date,
-          type,
-          rawText: values.rawText,
-          assignments
-        })
-      });
+      const matchDay = editingMatchDayId
+        ? await requestJson<{ id: string }>(`/api/matchdays/${editingMatchDayId}`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              seasonId: values.seasonId,
+              date: values.date,
+              rawText: values.rawText,
+              parseStatus: "PENDING",
+              assignments
+            })
+          })
+        : await requestJson<{ id: string }>("/api/matchdays", {
+            method: "POST",
+            body: JSON.stringify({
+              seasonId: values.seasonId,
+              date: values.date,
+              type,
+              rawText: values.rawText,
+              assignments
+            })
+          });
 
       await requestJson(`/api/matchdays/${matchDay.id}/parse`, {
         method: "POST",
@@ -260,7 +347,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
         })
       });
 
-      message.success("解析完成，请确认结果");
+      message.success(editingMatchDayId ? "重新解析完成，请确认结果" : "解析完成，请确认结果");
       router.push(`/matchdays/${matchDay.id}/confirm`);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "提交失败");
@@ -268,6 +355,37 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
       setSubmitting(false);
     }
   }
+
+  const quickAliasPanel = (
+    <div className="team-band">
+      <div style={{ marginBottom: 10 }}>
+        <strong>快速新增球员别名</strong>
+        <div style={{ color: "#64748b", marginTop: 4 }}>
+          保存后可直接重新点击上方识别按钮，无需进入球员管理页。
+        </div>
+      </div>
+      <Space.Compact style={{ width: "100%" }}>
+        <Select
+          showSearch
+          optionFilterProp="label"
+          style={{ width: 240 }}
+          placeholder="选择球员"
+          value={aliasPlayerId}
+          options={playerOptions}
+          onChange={setAliasPlayerId}
+        />
+        <Input
+          placeholder="输入昵称、简称或常见错别字"
+          value={aliasText}
+          onChange={(event) => setAliasText(event.target.value)}
+          onPressEnter={addAlias}
+        />
+        <Button icon={<Plus size={16} />} onClick={addAlias} loading={aliasSaving}>
+          保存别名
+        </Button>
+      </Space.Compact>
+    </div>
+  );
 
   return (
     <Form form={form} layout="vertical" onFinish={submit}>
@@ -285,6 +403,16 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
 
       {recognizeWarning ? (
         <Alert type="warning" showIcon message={recognizeWarning} style={{ marginBottom: 12 }} />
+      ) : null}
+
+      {editingMatchDayId ? (
+        <Alert
+          type="info"
+          showIcon
+          message="正在修改已解析的比赛日"
+          description="保存后会更新当前比赛日并生成新的解析结果，不会创建重复记录。"
+          style={{ marginBottom: 12 }}
+        />
       ) : null}
 
       {type === "INTERNAL" ? (
@@ -306,6 +434,8 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
               DeepSeek 识别并填入阵容
             </Button>
           </div>
+
+          {quickAliasPanel}
 
           {(["RED", "BLUE", "WHITE"] as const).map((teamColor) => (
             <div className="team-band" key={teamColor}>
@@ -364,6 +494,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
               DeepSeek 识别出勤名单
             </Button>
           </div>
+          {quickAliasPanel}
           <Form.Item name="externalPlayers" label="出勤名单" rules={[{ required: true }]}>
             <Select
               mode="multiple"

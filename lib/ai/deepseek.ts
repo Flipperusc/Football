@@ -87,7 +87,7 @@ function buildPrompt(input: AiParseInput) {
     "Use sectionNo 1-6 for internal games. Internal team colors must be red, blue, or white. External team color must be external.",
     "Only extract facts explicitly present in the text. Do not invent goals, assists, scores, awards, or bonus points.",
     "If the text says a player gets one extra point, put it in bonusPoints with points 1.",
-    "If the text says 最佳后卫 followed by one or more player names, put it in awards with name 最佳后卫, points 0, and all playerNames. Concatenated names can represent multiple known players, for example 最佳后卫欧巴果子林 means 欧巴 and 果之林 each receive one award count.",
+    "If the text says 最佳后卫 followed by one or more player names, including formats such as 最佳后卫：欧巴，果子林, put it in awards with name 最佳后卫, points 0, and all playerNames. Concatenated names can represent multiple known players, for example 最佳后卫欧巴果子林 means 欧巴 and 果之林 each receive one award count.",
     "Use the known player list only to recognize names and aliases. Keep names as text from the input.",
     `Match type: ${input.matchType}`,
     `Known players: ${JSON.stringify(players)}`,
