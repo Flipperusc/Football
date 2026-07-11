@@ -61,6 +61,25 @@ export type PlayerStats = {
   pointsPerInternalAppearance: number;
 };
 
+export type PlayerStatAdjustment = {
+  id: string;
+  playerId: string;
+  seasonId: string;
+  metric:
+    | "INTERNAL_GOALS"
+    | "INTERNAL_ASSISTS"
+    | "INTERNAL_APPEARANCES"
+    | "INTERNAL_SEASON_POINTS"
+    | "EXTERNAL_GOALS"
+    | "EXTERNAL_ASSISTS"
+    | "EXTERNAL_APPEARANCES";
+  operation: "SET" | "ADJUST";
+  value: number;
+  reason: string;
+  createdAt: string;
+  season?: Season;
+};
+
 export type TeamPhoto = {
   id: string;
   imageUrl: string;

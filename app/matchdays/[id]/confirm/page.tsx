@@ -411,7 +411,7 @@ export default function ConfirmMatchDayPage() {
           saveAliases: aliasDrafts
         })
       });
-      message.success("已确认入库");
+      message.success(matchDay?.parseStatus === "CONFIRMED" ? "修改已保存并重新入库" : "已确认入库");
       router.push(`/matchdays/${params.id}/share`);
     } catch (submitError) {
       message.error(submitError instanceof Error ? submitError.message : "确认失败");
@@ -645,24 +645,35 @@ export default function ConfirmMatchDayPage() {
     }
   ];
 
+  const isEditingConfirmed = matchDay?.parseStatus === "CONFIRMED";
   return (
     <>
       <div className="page-title">
         <div>
-          <h1>AI 解析确认</h1>
-          <p>解析结果已转换成表格，可直接修改比分、进球、助攻和球员匹配后确认入库</p>
+          <h1>{isEditingConfirmed ? "修改已入库比赛" : "AI 解析确认"}</h1>
+          <p>{isEditingConfirmed ? "修改后重新入库会覆盖这场比赛原有数据，不会重复累计" : "解析结果已转换成表格，可直接修改比分、进球、助攻和球员匹配后确认入库"}</p>
         </div>
         <Space>
           <Button icon={<ArrowLeft size={16} />} onClick={returnToEdit} disabled={!matchDay}>
             返回修改
           </Button>
           <Button type="primary" icon={<Save size={16} />} onClick={confirm} loading={saving}>
-            确认入库
+            {isEditingConfirmed ? "保存修改并重新入库" : "确认入库"}
           </Button>
         </Space>
       </div>
 
       {loadError ? <Alert type="error" showIcon message="加载失败" description={loadError} style={{ marginBottom: 16 }} /> : null}
+
+      {isEditingConfirmed ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="正在修改已入库比赛"
+          description="保存时会先清理该场原有的比分、进球、助攻、积分和奖项，再按当前内容重新写入。"
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
 
       {matchDay ? (
         <div className="section-panel">

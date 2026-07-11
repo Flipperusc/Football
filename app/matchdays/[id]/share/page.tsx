@@ -129,10 +129,26 @@ export default function MatchDaySharePage() {
     setExporting(true);
     try {
       await document.fonts.ready;
-      const dataUrl = await toPng(cardRef.current, {
+      const card = cardRef.current;
+      const exportWidth = Math.ceil(
+        Math.max(card.scrollWidth, card.getBoundingClientRect().width)
+      ) + 8;
+      const exportHeight = Math.ceil(
+        Math.max(card.scrollHeight, card.getBoundingClientRect().height)
+      ) + 2;
+      const dataUrl = await toPng(card, {
         backgroundColor: "#ffffff",
         cacheBust: true,
-        pixelRatio: 2
+        pixelRatio: 2,
+        width: exportWidth,
+        height: exportHeight,
+        style: {
+          width: `${exportWidth}px`,
+          minWidth: `${exportWidth}px`,
+          maxWidth: "none",
+          margin: "0",
+          overflow: "visible"
+        }
       });
       const link = document.createElement("a");
       link.download = "灵眸GPU-赛后战报-" + matchDay.date.slice(0, 10) + ".png";
