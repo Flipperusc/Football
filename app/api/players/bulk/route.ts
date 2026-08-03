@@ -2,33 +2,20 @@ import { NextResponse } from "next/server";
 import { normalizePlayerNameForImport, playerImportKey } from "@/lib/ai/player-list";
 import { prisma } from "@/lib/prisma";
 import { apiErrorResponse } from "@/lib/server/api-error";
+import {
+  findPlayerNameConflict,
+  formatPlayerNameConflict,
+  type PlayerNameConflict,
+  type PlayerNameSource
+} from "@/lib/server/player-name-occupancy";
 import { playerBulkCreateSchema } from "@/lib/validations";
-
-function buildExistingLookup(
-  players: {
-    id: string;
-    name: string;
-    aliases: { alias: string }[];
-  }[]
-) {
-  const lookup = new Map<string, { id: string; name: string }>();
-  for (const player of players) {
-    const playerKey = playerImportKey(player.name);
-    if (playerKey) lookup.set(playerKey, { id: player.id, name: player.name });
-    for (const alias of player.aliases) {
-      const aliasKey = playerImportKey(alias.alias);
-      if (aliasKey) lookup.set(aliasKey, { id: player.id, name: player.name });
-    }
-  }
-  return lookup;
-}
 
 export async function POST(request: Request) {
   try {
     const body = playerBulkCreateSchema.parse(await request.json());
     const existingPlayers = await prisma.player.findMany({ include: { aliases: true } });
-    const existingLookup = buildExistingLookup(existingPlayers);
     const seenInput = new Set<string>();
+    const acceptedSources: PlayerNameSource[] = [];
     const skipped: { name: string; reason: string; existingPlayerId?: string; existingName?: string }[] = [];
     const createRows: {
       name: string;
@@ -49,13 +36,43 @@ export async function POST(request: Request) {
       }
       seenInput.add(key);
 
-      const existing = existingLookup.get(key);
-      if (existing) {
+      const occupancySources: PlayerNameSource[] = [...existingPlayers, ...acceptedSources];
+      const conflict = findPlayerNameConflict(name, occupancySources);
+      if (conflict) {
+        const isExistingPlayer = existingPlayers.some((player) => player.id === conflict.playerId);
         skipped.push({
           name,
-          reason: "球员已存在",
-          existingPlayerId: existing.id,
-          existingName: existing.name
+          reason: formatPlayerNameConflict("球员名称", name, conflict),
+          existingPlayerId: isExistingPlayer ? conflict.playerId : undefined,
+          existingName: conflict.playerName
+        });
+        continue;
+      }
+
+      const pendingPlayer: PlayerNameSource = {
+        id: `pending-player-${acceptedSources.length}`,
+        name,
+        aliases: []
+      };
+      let aliasConflict: PlayerNameConflict | null = null;
+      let conflictingAliasName = "";
+      for (const alias of row.aliases ?? []) {
+        aliasConflict = findPlayerNameConflict(alias.alias, [...occupancySources, pendingPlayer]);
+        if (aliasConflict) {
+          conflictingAliasName = alias.alias;
+          break;
+        }
+        pendingPlayer.aliases.push({ alias: alias.alias });
+      }
+      if (aliasConflict) {
+        const isExistingPlayer = existingPlayers.some(
+          (player) => player.id === aliasConflict.playerId
+        );
+        skipped.push({
+          name,
+          reason: formatPlayerNameConflict("别名", conflictingAliasName, aliasConflict),
+          existingPlayerId: isExistingPlayer ? aliasConflict.playerId : undefined,
+          existingName: aliasConflict.playerName
         });
         continue;
       }
@@ -67,6 +84,7 @@ export async function POST(request: Request) {
         status: row.status ?? "ACTIVE",
         aliases: row.aliases
       });
+      acceptedSources.push(pendingPlayer);
     }
 
     const created = createRows.length

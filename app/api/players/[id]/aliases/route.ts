@@ -2,11 +2,30 @@ import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { apiErrorResponse } from "@/lib/server/api-error";
+import {
+  findPlayerNameConflict,
+  formatPlayerNameConflict
+} from "@/lib/server/player-name-occupancy";
 import { aliasCreateSchema } from "@/lib/validations";
 
 export async function POST(request: Request, { params }: { params: { id: string } }) {
   try {
     const body = aliasCreateSchema.parse(await request.json());
+    const existingPlayers = await prisma.player.findMany({
+      select: {
+        id: true,
+        name: true,
+        aliases: { select: { id: true, alias: true } }
+      }
+    });
+    const conflict = findPlayerNameConflict(body.alias, existingPlayers);
+    if (conflict) {
+      return NextResponse.json(
+        { message: formatPlayerNameConflict("别名", body.alias, conflict) },
+        { status: 409 }
+      );
+    }
+
     const alias = await prisma.playerAlias.create({
       data: {
         playerId: params.id,
