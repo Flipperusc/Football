@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { apiErrorResponse } from "@/lib/server/api-error";
+import {
+  findPlayerNameConflict,
+  formatPlayerNameConflict
+} from "@/lib/server/player-name-occupancy";
 import { playerUpdateSchema } from "@/lib/validations";
 
 export async function GET(_: Request, { params }: { params: { id: string } }) {
@@ -13,14 +17,37 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
 }
 
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {
-  const body = playerUpdateSchema.parse(await request.json());
-  const { aliases: _aliases, ...data } = body;
-  const player = await prisma.player.update({
-    where: { id: params.id },
-    data,
-    include: { aliases: true }
-  });
-  return NextResponse.json(player);
+  try {
+    const body = playerUpdateSchema.parse(await request.json());
+    if (body.name !== undefined) {
+      const existingPlayers = await prisma.player.findMany({
+        select: {
+          id: true,
+          name: true,
+          aliases: { select: { id: true, alias: true } }
+        }
+      });
+      const conflict = findPlayerNameConflict(body.name, existingPlayers, {
+        excludeStandardNameOfPlayerId: params.id
+      });
+      if (conflict) {
+        return NextResponse.json(
+          { message: formatPlayerNameConflict("球员名称", body.name, conflict) },
+          { status: 409 }
+        );
+      }
+    }
+
+    const { aliases: _aliases, ...data } = body;
+    const player = await prisma.player.update({
+      where: { id: params.id },
+      data,
+      include: { aliases: true }
+    });
+    return NextResponse.json(player);
+  } catch (error) {
+    return apiErrorResponse(error, "更新球员失败");
+  }
 }
 
 export async function DELETE(_: Request, { params }: { params: { id: string } }) {
