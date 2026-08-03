@@ -94,6 +94,10 @@ export type TeamSetting = {
   logoUrl?: string | null;
 };
 
+export function getRequestErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,

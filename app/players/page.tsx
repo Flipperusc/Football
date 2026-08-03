@@ -20,7 +20,7 @@ import type { ColumnsType } from "antd/es/table";
 import { Plus, Save, SlidersHorizontal, Trash2, UserPlus } from "lucide-react";
 import { PlayerBulkImport } from "@/components/PlayerBulkImport";
 import type { Player, Season } from "@/lib/client-types";
-import { requestJson } from "@/lib/client-types";
+import { getRequestErrorMessage, requestJson } from "@/lib/client-types";
 import { getDisplayImageUrl, normalizeImageUrl } from "@/lib/image-url";
 import {
   formatStatAdjustmentValue,
@@ -200,53 +200,65 @@ export default function PlayersPage() {
   }, []);
 
   async function createPlayer(values: PlayerFormValues) {
-    await requestJson<Player>("/api/players", {
-      method: "POST",
-      body: JSON.stringify({
-        name: values.name,
-        jerseyNumber: values.jerseyNumber ?? null,
-        position: values.position ?? null,
-        avatarUrl: normalizeImageUrl(values.avatarUrl) || null,
-        status: values.status ?? "ACTIVE",
-        aliases: (values.aliasesText ?? "")
-          .split(/[,，\n]/)
-          .map((alias) => alias.trim())
-          .filter(Boolean)
-          .map((alias) => ({ alias, aliasType: "MANUAL" }))
-      })
-    });
-    form.resetFields();
-    message.success("已新增球员");
-    await load();
+    try {
+      await requestJson<Player>("/api/players", {
+        method: "POST",
+        body: JSON.stringify({
+          name: values.name,
+          jerseyNumber: values.jerseyNumber ?? null,
+          position: values.position ?? null,
+          avatarUrl: normalizeImageUrl(values.avatarUrl) || null,
+          status: values.status ?? "ACTIVE",
+          aliases: (values.aliasesText ?? "")
+            .split(/[,，\n]/)
+            .map((alias) => alias.trim())
+            .filter(Boolean)
+            .map((alias) => ({ alias, aliasType: "MANUAL" }))
+        })
+      });
+      form.resetFields();
+      message.success("已新增球员");
+      await load();
+    } catch (error) {
+      message.error(getRequestErrorMessage(error, "新增球员失败"));
+    }
   }
 
   async function updatePlayer(values: PlayerFormValues) {
     if (!editing) return;
-    await requestJson<Player>(`/api/players/${editing.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        name: values.name,
-        jerseyNumber: values.jerseyNumber ?? null,
-        position: values.position ?? null,
-        avatarUrl: normalizeImageUrl(values.avatarUrl) || null,
-        status: values.status ?? "ACTIVE"
-      })
-    });
-    setEditing(null);
-    message.success("已更新球员");
-    await load();
+    try {
+      await requestJson<Player>(`/api/players/${editing.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: values.name,
+          jerseyNumber: values.jerseyNumber ?? null,
+          position: values.position ?? null,
+          avatarUrl: normalizeImageUrl(values.avatarUrl) || null,
+          status: values.status ?? "ACTIVE"
+        })
+      });
+      setEditing(null);
+      message.success("已更新球员");
+      await load();
+    } catch (error) {
+      message.error(getRequestErrorMessage(error, "更新球员失败"));
+    }
   }
 
   async function addAlias(playerId: string) {
     const alias = aliasInputs[playerId]?.trim();
     if (!alias) return;
-    await requestJson(`/api/players/${playerId}/aliases`, {
-      method: "POST",
-      body: JSON.stringify({ alias, aliasType: "MANUAL" })
-    });
-    setAliasInputs((current) => ({ ...current, [playerId]: "" }));
-    message.success("已保存别名");
-    await load();
+    try {
+      await requestJson(`/api/players/${playerId}/aliases`, {
+        method: "POST",
+        body: JSON.stringify({ alias, aliasType: "MANUAL" })
+      });
+      setAliasInputs((current) => ({ ...current, [playerId]: "" }));
+      message.success("已保存别名");
+      await load();
+    } catch (error) {
+      message.error(getRequestErrorMessage(error, "保存球员别名失败"));
+    }
   }
 
   async function deletePlayer(player: Player) {
