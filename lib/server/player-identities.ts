@@ -93,6 +93,14 @@ function conflictFor(candidate: IdentityCandidate, conflicting: IdentityRecord):
   );
 }
 
+function aliasEqualsNameConflict(value: string) {
+  return new PlayerIdentityConflictError(
+    "PLAYER_ALIAS_EQUALS_NAME",
+    value,
+    `球员别名不能与球员名称“${value}”相同。`
+  );
+}
+
 export function assertIdentityCandidatesAvailable(
   existing: readonly IdentityRecord[],
   candidates: readonly IdentityCandidate[],
@@ -109,17 +117,16 @@ export function assertIdentityCandidatesAvailable(
           other.value === candidate.value
       );
       if (ownName) {
-        throw new PlayerIdentityConflictError(
-          "PLAYER_ALIAS_EQUALS_NAME",
-          candidate.value,
-          `球员别名不能与球员名称“${candidate.value}”相同。`
-        );
+        throw aliasEqualsNameConflict(candidate.value);
       }
     }
 
     for (const record of existing) {
       if (record.value !== candidate.value) continue;
-      if (record.ownerId === candidate.ownerId && record.kind === "PLAYER_NAME") continue;
+      if (record.ownerId === candidate.ownerId && record.kind === "PLAYER_NAME") {
+        if (candidate.kind === "PLAYER_NAME") continue;
+        throw aliasEqualsNameConflict(candidate.value);
+      }
       if (
         options.allowExistingAliasForSameOwner &&
         record.ownerId === candidate.ownerId &&

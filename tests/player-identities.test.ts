@@ -12,15 +12,36 @@ const existing = [
   { ownerId: "inactive", ownerName: "李四", value: "老李", kind: "ALIAS" as const }
 ];
 
-function expectConflict(run: () => void, code: string, value: string) {
+function expectConflict(run: () => void, code: string, value: string, message?: string) {
   expect(run).toThrowError(PlayerIdentityConflictError);
 
   try {
     run();
   } catch (error) {
     expect(error).toMatchObject({ status: 409, code, value });
-    expect((error as Error).message).toMatch(/[一-鿿]/);
+    if (message) {
+      expect((error as Error).message).toBe(message);
+    } else {
+      expect((error as Error).message).toMatch(/[一-鿿]/);
+    }
   }
+}
+
+async function expectAsyncConflict(
+  run: () => Promise<unknown>,
+  code: string,
+  value: string,
+  message: string
+) {
+  let thrown: unknown;
+  try {
+    await run();
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(PlayerIdentityConflictError);
+  expect(thrown).toMatchObject({ status: 409, code, value });
+  expect((thrown as Error).message).toBe(message);
 }
 
 describe("player identity conflict validation", () => {
@@ -131,6 +152,24 @@ describe("player identity conflict validation", () => {
     );
   });
 
+  it("rejects an alias that equals the player's previous stored name during a rename", () => {
+    const message = "球员别名不能与球员名称“张三”相同。";
+
+    expectConflict(
+      () =>
+        assertIdentityCandidatesAvailable(
+          [{ ownerId: "p1", ownerName: "张三", value: "张三", kind: "PLAYER_NAME" }],
+          [
+            { ownerId: "p1", ownerName: "王五", value: "王五", kind: "PLAYER_NAME" },
+            { ownerId: "p1", ownerName: "王五", value: "张三", kind: "ALIAS" }
+          ]
+        ),
+      "PLAYER_ALIAS_EQUALS_NAME",
+      "张三",
+      message
+    );
+  });
+
   it("allows only a current owner's existing alias as an explicit idempotent no-op", () => {
     const records = [{ ownerId: "p1", ownerName: "王五", value: "小王", kind: "ALIAS" as const }];
     const candidates = [{ ownerId: "p1", ownerName: "王五", value: "小王", kind: "ALIAS" as const }];
@@ -157,6 +196,27 @@ describe("player identity conflict validation", () => {
 });
 
 describe("Prisma-backed player identity validation", () => {
+  it("rejects a rename payload whose alias equals the player's previous stored name", async () => {
+    const message = "球员别名不能与球员名称“张三”相同。";
+    const db = {
+      player: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "p1", name: "张三", status: "ACTIVE" as const, aliases: [] }
+        ])
+      }
+    };
+
+    await expectAsyncConflict(
+      () =>
+        assertPlayerPayloadsAvailable(db, [
+          { ownerId: "p1", name: "王五", aliases: ["张三"] }
+        ]),
+      "PLAYER_ALIAS_EQUALS_NAME",
+      "张三",
+      message
+    );
+  });
+
   it("keeps an inactive player's name reserved", async () => {
     const db = {
       player: {
