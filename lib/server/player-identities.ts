@@ -61,6 +61,12 @@ type PlayerIdentityDb = {
   };
 };
 
+type PlayerAliasDeleteDb = {
+  playerAlias: {
+    deleteMany(args: { where: { id: string; playerId: string } }): Promise<{ count: number }>;
+  };
+};
+
 function conflictFor(candidate: IdentityCandidate, conflicting: IdentityRecord): PlayerIdentityConflictError {
   if (candidate.kind === "PLAYER_NAME") {
     if (conflicting.kind === "PLAYER_NAME") {
@@ -195,6 +201,18 @@ export async function assertPlayerPayloadsAvailable(
   const candidates = payloads.flatMap(candidateFromPayload);
 
   assertIdentityCandidatesAvailable(existing, candidates, options);
+}
+
+export async function deletePlayerAlias(
+  db: PlayerAliasDeleteDb,
+  playerId: string,
+  aliasId: string
+): Promise<boolean> {
+  const result = await db.playerAlias.deleteMany({
+    where: { id: aliasId, playerId }
+  });
+
+  return result.count === 1;
 }
 
 function lateWriteConflict(candidate: IdentityCandidate) {
