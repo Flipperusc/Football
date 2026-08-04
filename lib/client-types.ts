@@ -94,5 +94,6 @@ export async function requestJson<T>(url: string, init?: RequestInit): Promise<T
 
     throw new Error(message ?? `请求失败：${response.status}`);
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }

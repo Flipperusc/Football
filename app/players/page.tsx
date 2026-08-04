@@ -9,6 +9,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popconfirm,
   Select,
   Space,
   Table,
@@ -16,7 +17,7 @@ import {
   Upload
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Plus, Save, SlidersHorizontal, UserPlus } from "lucide-react";
+import { Plus, Save, SlidersHorizontal, UserPlus, X } from "lucide-react";
 import { PlayerBulkImport } from "@/components/PlayerBulkImport";
 import type { Player, Season } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
@@ -164,6 +165,7 @@ export default function PlayersPage() {
   const [editing, setEditing] = useState<Player | null>(null);
   const [adjusting, setAdjusting] = useState<Player | null>(null);
   const [aliasInputs, setAliasInputs] = useState<Record<string, string>>({});
+  const [deletingAliasId, setDeletingAliasId] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -245,6 +247,19 @@ export default function PlayersPage() {
     await load();
   }
 
+  async function deleteAlias(playerId: string, aliasId: string) {
+    setDeletingAliasId(aliasId);
+    try {
+      await requestJson<void>(`/api/players/${playerId}/aliases/${aliasId}`, { method: "DELETE" });
+      message.success("已删除别名");
+      await load();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "删除别名失败");
+    } finally {
+      setDeletingAliasId(null);
+    }
+  }
+
   function openAdjustmentModal(player: Player) {
     const defaultSeasonId = seasons.find((season) => season.status === "ACTIVE")?.id ?? seasons[0]?.id;
     setAdjusting(player);
@@ -295,11 +310,29 @@ export default function PlayersPage() {
     {
       title: "别名",
       dataIndex: "aliases",
-      render: (aliases: Player["aliases"]) => (
+      render: (aliases: Player["aliases"], player) => (
         <Space wrap>
-          {(aliases ?? []).map((alias) => (
-            <Tag key={alias.id}>{alias.alias}</Tag>
-          ))}
+          {(aliases ?? []).map((alias) => {
+            const isDeleting = deletingAliasId === alias.id;
+
+            return (
+              <Popconfirm
+                key={alias.id}
+                title={`确认删除别名“${alias.alias}”？`}
+                onConfirm={() => deleteAlias(player.id, alias.id)}
+                disabled={isDeleting}
+              >
+                <Tag
+                  closable={!isDeleting}
+                  closeIcon={<X size={14} />}
+                  onClose={(event) => event.preventDefault()}
+                >
+                  {alias.alias}
+                  {isDeleting ? "（删除中）" : ""}
+                </Tag>
+              </Popconfirm>
+            );
+          })}
         </Space>
       )
     },
