@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { normalizePlayerNameForImport, playerImportKey } from "@/lib/ai/player-list";
 import { prisma } from "@/lib/prisma";
 import { apiErrorResponse } from "@/lib/server/api-error";
 import {
@@ -30,10 +29,10 @@ function buildExistingLookup(
 ) {
   const lookup = new Map<string, { id: string; name: string }>();
   for (const player of players) {
-    const playerKey = playerImportKey(player.name);
+    const playerKey = player.name.trim();
     if (playerKey) lookup.set(playerKey, { id: player.id, name: player.name });
     for (const alias of player.aliases) {
-      const aliasKey = playerImportKey(alias.alias);
+      const aliasKey = alias.alias.trim();
       if (aliasKey) lookup.set(aliasKey, { id: player.id, name: player.name });
     }
   }
@@ -67,8 +66,8 @@ export async function POST(request: Request) {
     const candidateRows: CreateRow[] = [];
 
     for (const [index, row] of body.players.entries()) {
-      const name = normalizePlayerNameForImport(row.name);
-      const key = playerImportKey(name);
+      const name = row.name.trim();
+      const key = name;
       if (!name || !key) continue;
 
       if (seenInput.has(key)) {
