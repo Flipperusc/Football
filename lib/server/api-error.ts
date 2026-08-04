@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
+import { PlayerIdentityConflictError } from "@/lib/server/player-identities";
 
 function prismaMessage(error: unknown) {
   if (error instanceof Prisma.PrismaClientInitializationError) {
@@ -33,6 +34,17 @@ function prismaMessage(error: unknown) {
 }
 
 export function apiErrorResponse(error: unknown, fallback = "请求处理失败") {
+  if (error instanceof PlayerIdentityConflictError) {
+    return NextResponse.json(
+      {
+        message: error.message,
+        code: error.code,
+        value: error.value
+      },
+      { status: error.status }
+    );
+  }
+
   if (error instanceof ZodError) {
     return NextResponse.json(
       {

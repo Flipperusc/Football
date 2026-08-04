@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { apiErrorResponse } from "@/lib/server/api-error";
 import { confirmMatchDay } from "@/lib/server/confirm-matchday";
+import { PlayerIdentityConflictError } from "@/lib/server/player-identities";
 import { confirmRequestSchema } from "@/lib/validations";
 
 export async function POST(request: Request, { params }: { params: { id: string } }) {
@@ -14,6 +16,9 @@ export async function POST(request: Request, { params }: { params: { id: string 
     });
     return NextResponse.json(confirmed);
   } catch (error) {
+    if (error instanceof PlayerIdentityConflictError) {
+      return apiErrorResponse(error);
+    }
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "Confirm failed" },
       { status: 422 }

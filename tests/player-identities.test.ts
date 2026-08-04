@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
+import { apiErrorResponse } from "@/lib/server/api-error";
 import {
   assertIdentityCandidatesAvailable,
   assertPlayerPayloadsAvailable,
@@ -45,6 +46,19 @@ async function expectAsyncConflict(
 }
 
 describe("player identity conflict validation", () => {
+  it("serializes identity conflicts as stable HTTP 409 responses", async () => {
+    const response = apiErrorResponse(
+      new PlayerIdentityConflictError("PLAYER_NAME_CONFLICT", "张三", "球员“张三”已存在")
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      message: "球员“张三”已存在",
+      code: "PLAYER_NAME_CONFLICT",
+      value: "张三"
+    });
+  });
+
   it("rejects a name owned by an inactive player", () => {
     expectConflict(
       () =>

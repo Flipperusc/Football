@@ -2,6 +2,11 @@ import type { PrismaClient } from "@prisma/client";
 import { parseResultSchema, type ParseResult } from "@/lib/ai/schemas";
 import { calculateTeamResults, allocatePlayerMatchdayPoints } from "@/lib/stats/calculate";
 import { isBestDefenderAwardName } from "@/lib/stats/awards";
+import {
+  assertPlayerPayloadsAvailable,
+  translatePlayerIdentityWriteError,
+  type IdentityCandidate
+} from "@/lib/server/player-identities";
 import type {
   BonusPointInput,
   InternalGameInput,
@@ -57,6 +62,39 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
     });
     if (!matchDay) throw new Error("比赛日不存在");
 
+    const aliasesToSave = input.saveAliases ?? [];
+    const aliasOwnerIds = [...new Set(aliasesToSave.map((alias) => alias.playerId))];
+    const aliasOwners = aliasOwnerIds.length
+      ? await tx.player.findMany({
+          where: { id: { in: aliasOwnerIds } },
+          select: { id: true, name: true, aliases: { select: { alias: true } } }
+        })
+      : [];
+    const aliasOwnerNameById = new Map(aliasOwners.map((player) => [player.id, player.name]));
+    const existingAliasesByOwnerId = new Map(
+      aliasOwners.map((player) => [
+        player.id,
+        new Set(player.aliases.map((alias) => alias.alias))
+      ])
+    );
+    const missingAliasOwner = aliasOwnerIds.find((playerId) => !aliasOwnerNameById.has(playerId));
+    if (missingAliasOwner) {
+      throw new Error(`保存别名的球员不存在：${missingAliasOwner}`);
+    }
+    if (aliasesToSave.length > 0) {
+      await assertPlayerPayloadsAvailable(
+        tx,
+        aliasOwnerIds.map((playerId) => ({
+          ownerId: playerId,
+          name: aliasOwnerNameById.get(playerId)!,
+          aliases: aliasesToSave
+            .filter((alias) => alias.playerId === playerId)
+            .map((alias) => alias.rawName)
+        })),
+        { allowExistingAliasForSameOwner: true }
+      );
+    }
+
     const activeAssignments = input.teamAssignments
       ? input.teamAssignments.map((assignment) => ({
           matchDayId: input.matchDayId,
@@ -100,15 +138,23 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
       }
     }
 
-    if (input.saveAliases?.length) {
-      await tx.playerAlias.createMany({
-        data: input.saveAliases.map((alias) => ({
-          playerId: alias.playerId,
-          alias: alias.rawName,
-          aliasType: alias.aliasType
-        })),
-        skipDuplicates: true
-      });
+    for (const alias of aliasesToSave) {
+      if (existingAliasesByOwnerId.get(alias.playerId)?.has(alias.rawName)) continue;
+      const candidate: IdentityCandidate = {
+        ownerId: alias.playerId,
+        ownerName: aliasOwnerNameById.get(alias.playerId)!,
+        value: alias.rawName,
+        kind: "ALIAS"
+      };
+      await tx.playerAlias
+        .create({
+          data: {
+            playerId: alias.playerId,
+            alias: alias.rawName,
+            aliasType: alias.aliasType
+          }
+        })
+        .catch((error) => translatePlayerIdentityWriteError(error, [candidate]));
     }
 
     if (parsed.matchType === "internal") {
