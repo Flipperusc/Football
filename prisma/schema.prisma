@@ -71,7 +71,7 @@ enum StatAdjustmentOperation {
 
 model Player {
   id                  String                @id @default(cuid())
-  name                String
+  name                String                @unique
   jerseyNumber        Int?
   position            String?
   avatarUrl           String?
@@ -91,11 +91,10 @@ model PlayerAlias {
   id        String    @id @default(cuid())
   playerId  String
   player    Player    @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  alias     String
+  alias     String    @unique
   aliasType AliasType @default(MANUAL)
   createdAt DateTime  @default(now())
 
-  @@unique([playerId, alias])
   @@index([alias])
 }
 
