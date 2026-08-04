@@ -248,6 +248,7 @@ export default function PlayersPage() {
   }
 
   async function deleteAlias(playerId: string, aliasId: string) {
+    if (deletingAliasId === aliasId) return;
     setDeletingAliasId(aliasId);
     try {
       await requestJson<void>(`/api/players/${playerId}/aliases/${aliasId}`, { method: "DELETE" });
@@ -316,21 +317,26 @@ export default function PlayersPage() {
             const isDeleting = deletingAliasId === alias.id;
 
             return (
-              <Popconfirm
-                key={alias.id}
-                title={`确认删除别名“${alias.alias}”？`}
-                onConfirm={() => deleteAlias(player.id, alias.id)}
-                disabled={isDeleting}
-              >
-                <Tag
-                  closable={!isDeleting}
-                  closeIcon={<X size={14} />}
-                  onClose={(event) => event.preventDefault()}
+              <Tag key={alias.id}>
+                {alias.alias}
+                {isDeleting ? "（删除中）" : ""}
+                <Popconfirm
+                  title={`确认删除别名“${alias.alias}”？`}
+                  onConfirm={() => deleteAlias(player.id, alias.id)}
+                  disabled={isDeleting}
                 >
-                  {alias.alias}
-                  {isDeleting ? "（删除中）" : ""}
-                </Tag>
-              </Popconfirm>
+                  <Button
+                    aria-label={`删除别名 ${alias.alias}`}
+                    danger
+                    disabled={isDeleting}
+                    icon={<X size={14} />}
+                    loading={isDeleting}
+                    size="small"
+                    type="text"
+                    style={{ height: 18, marginInlineStart: 4, padding: 0, width: 18 }}
+                  />
+                </Popconfirm>
+              </Tag>
             );
           })}
         </Space>
