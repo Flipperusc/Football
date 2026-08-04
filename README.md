@@ -2,6 +2,8 @@
 
 足球队赛季数据统计系统 P0。系统用于维护球员名单、赛季、队内赛/队外赛比赛日、AI 赛后文本解析、人工确认入库，以及按数据库事件重新计算赛季榜单。
 
+> **从空机器启动、生产部署、迁移和故障排查请先看 [项目架构与启动指南](docs/项目架构与启动指南.md)。** 本 README 保持简短的项目入口；不要将真实数据库密码、API Key 或会话令牌写入仓库。
+
 ## 技术栈
 
 - Next.js App Router + React + TypeScript
@@ -23,13 +25,16 @@ corepack pnpm prisma:generate
 
 2. 配置环境变量
 
-复制 `.env.example` 为 `.env`，修改数据库地址和 DeepSeek Key：
+复制 `.env.example` 为 `.env`，填写自己的数据库地址、管理员凭据和 DeepSeek Key（下列均为占位符）：
 
 ```bash
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/football_team?schema=public"
-DEEPSEEK_API_KEY="sk-..."
+DATABASE_URL="postgresql://<DB_USER>:<DB_PASSWORD>@<DB_HOST>:5432/football_team?schema=public"
+DEEPSEEK_API_KEY="<DEEPSEEK_API_KEY_OR_EMPTY>"
 DEEPSEEK_MODEL="deepseek-v4-flash"
-UPLOAD_DIR=""
+ADMIN_USERNAME="<ADMIN_USERNAME>"
+ADMIN_PASSWORD="<ADMIN_PASSWORD>"
+ADMIN_SESSION_TOKEN="<LONG_RANDOM_SESSION_TOKEN>"
+UPLOAD_DIR="<OPTIONAL_PERSISTENT_UPLOAD_DIRECTORY>"
 ```
 
 `DEEPSEEK_API_KEY` 只能放在服务端环境变量里，前端不会直接调用 DeepSeek。
@@ -104,6 +109,7 @@ Prisma schema 位于 `prisma/schema.prisma`，迁移文件位于 `prisma/migrati
 - `GET /api/players/:id`
 - `PATCH /api/players/:id`
 - `POST /api/players/:id/aliases`
+- `DELETE /api/players/:id/aliases/:aliasId`
 
 赛季：
 
