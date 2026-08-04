@@ -264,3 +264,10 @@ model TeamPhoto {
 
   @@index([isActive, sortOrder, createdAt])
 }
+
+model TeamSetting {
+  id        String   @id
+  logoUrl   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

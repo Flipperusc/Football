@@ -17,11 +17,15 @@ import {
   Upload
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Plus, Save, SlidersHorizontal, UserPlus, X } from "lucide-react";
+import { Plus, Save, SlidersHorizontal, Trash2, UserPlus, X } from "lucide-react";
 import { PlayerBulkImport } from "@/components/PlayerBulkImport";
 import type { Player, Season } from "@/lib/client-types";
-import { requestJson } from "@/lib/client-types";
+import { getRequestErrorMessage, requestJson } from "@/lib/client-types";
 import { getDisplayImageUrl, normalizeImageUrl } from "@/lib/image-url";
+import {
+  formatStatAdjustmentValue,
+  statAdjustmentMetricLabels
+} from "@/lib/stat-adjustments";
 
 type PlayerFormValues = {
   name: string;
@@ -63,18 +67,16 @@ type StatAdjustment = {
 };
 
 const metricOptions: { label: string; value: StatMetric }[] = [
-  { label: "队内进球数", value: "INTERNAL_GOALS" },
-  { label: "队内助攻数", value: "INTERNAL_ASSISTS" },
-  { label: "队内出勤", value: "INTERNAL_APPEARANCES" },
   { label: "队内赛积分", value: "INTERNAL_SEASON_POINTS" },
-  { label: "队外进球数", value: "EXTERNAL_GOALS" },
-  { label: "队外助攻数", value: "EXTERNAL_ASSISTS" },
+  { label: "队内进球", value: "INTERNAL_GOALS" },
+  { label: "队内助攻", value: "INTERNAL_ASSISTS" },
+  { label: "队外进球", value: "EXTERNAL_GOALS" },
+  { label: "队外助攻", value: "EXTERNAL_ASSISTS" },
+  { label: "队内出勤", value: "INTERNAL_APPEARANCES" },
   { label: "队外出勤", value: "EXTERNAL_APPEARANCES" }
 ];
 
-const metricLabels = Object.fromEntries(
-  metricOptions.map((item) => [item.value, item.label])
-) as Record<StatMetric, string>;
+const metricLabels = statAdjustmentMetricLabels as Record<StatMetric, string>;
 
 function avatarLabel(player: Player) {
   return Array.from(player.name.trim()).slice(0, 2).join("") || "球";
@@ -162,6 +164,7 @@ export default function PlayersPage() {
   const [adjustments, setAdjustments] = useState<StatAdjustment[]>([]);
   const [loading, setLoading] = useState(false);
   const [adjustmentLoading, setAdjustmentLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string>();
   const [editing, setEditing] = useState<Player | null>(null);
   const [adjusting, setAdjusting] = useState<Player | null>(null);
   const [aliasInputs, setAliasInputs] = useState<Record<string, string>>({});
@@ -199,53 +202,80 @@ export default function PlayersPage() {
   }, []);
 
   async function createPlayer(values: PlayerFormValues) {
-    await requestJson<Player>("/api/players", {
-      method: "POST",
-      body: JSON.stringify({
-        name: values.name,
-        jerseyNumber: values.jerseyNumber ?? null,
-        position: values.position ?? null,
-        avatarUrl: normalizeImageUrl(values.avatarUrl) || null,
-        status: values.status ?? "ACTIVE",
-        aliases: (values.aliasesText ?? "")
-          .split(/[,，\n]/)
-          .map((alias) => alias.trim())
-          .filter(Boolean)
-          .map((alias) => ({ alias, aliasType: "MANUAL" }))
-      })
-    });
-    form.resetFields();
-    message.success("已新增球员");
-    await load();
+    try {
+      await requestJson<Player>("/api/players", {
+        method: "POST",
+        body: JSON.stringify({
+          name: values.name,
+          jerseyNumber: values.jerseyNumber ?? null,
+          position: values.position ?? null,
+          avatarUrl: normalizeImageUrl(values.avatarUrl) || null,
+          status: values.status ?? "ACTIVE",
+          aliases: (values.aliasesText ?? "")
+            .split(/[,，\n]/)
+            .map((alias) => alias.trim())
+            .filter(Boolean)
+            .map((alias) => ({ alias, aliasType: "MANUAL" }))
+        })
+      });
+      form.resetFields();
+      message.success("已新增球员");
+      await load();
+    } catch (error) {
+      message.error(getRequestErrorMessage(error, "新增球员失败"));
+    }
   }
 
   async function updatePlayer(values: PlayerFormValues) {
     if (!editing) return;
-    await requestJson<Player>(`/api/players/${editing.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        name: values.name,
-        jerseyNumber: values.jerseyNumber ?? null,
-        position: values.position ?? null,
-        avatarUrl: normalizeImageUrl(values.avatarUrl) || null,
-        status: values.status ?? "ACTIVE"
-      })
-    });
-    setEditing(null);
-    message.success("已更新球员");
-    await load();
+    try {
+      await requestJson<Player>(`/api/players/${editing.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: values.name,
+          jerseyNumber: values.jerseyNumber ?? null,
+          position: values.position ?? null,
+          avatarUrl: normalizeImageUrl(values.avatarUrl) || null,
+          status: values.status ?? "ACTIVE"
+        })
+      });
+      setEditing(null);
+      message.success("已更新球员");
+      await load();
+    } catch (error) {
+      message.error(getRequestErrorMessage(error, "更新球员失败"));
+    }
   }
 
   async function addAlias(playerId: string) {
     const alias = aliasInputs[playerId]?.trim();
     if (!alias) return;
-    await requestJson(`/api/players/${playerId}/aliases`, {
-      method: "POST",
-      body: JSON.stringify({ alias, aliasType: "MANUAL" })
-    });
-    setAliasInputs((current) => ({ ...current, [playerId]: "" }));
-    message.success("已保存别名");
-    await load();
+    try {
+      await requestJson(`/api/players/${playerId}/aliases`, {
+        method: "POST",
+        body: JSON.stringify({ alias, aliasType: "MANUAL" })
+      });
+      setAliasInputs((current) => ({ ...current, [playerId]: "" }));
+      message.success("已保存别名");
+      await load();
+    } catch (error) {
+      message.error(getRequestErrorMessage(error, "保存球员别名失败"));
+    }
+  }
+
+  async function deletePlayer(player: Player) {
+    setDeletingId(player.id);
+    try {
+      await requestJson<{ ok: boolean }>(`/api/players/${player.id}`, {
+        method: "DELETE"
+      });
+      message.success(`已删除球员“${player.name}”`);
+      await load();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "删除球员失败");
+    } finally {
+      setDeletingId(undefined);
+    }
   }
 
   async function deleteAlias(playerId: string, aliasId: string) {
@@ -269,9 +299,9 @@ export default function PlayersPage() {
     setAdjusting(player);
     adjustmentForm.setFieldsValue({
       seasonId: defaultSeasonId,
-      metric: "INTERNAL_GOALS",
-      operation: "SET",
-      value: 0,
+      metric: "INTERNAL_SEASON_POINTS",
+      operation: "ADJUST",
+      value: 1,
       reason: ""
     });
     void loadAdjustments(player.id, defaultSeasonId);
@@ -283,8 +313,8 @@ export default function PlayersPage() {
       method: "POST",
       body: JSON.stringify(values)
     });
-    message.success("已保存数据调整");
-    adjustmentForm.setFieldsValue({ reason: "" });
+    message.success("手动数据变动已保存");
+    adjustmentForm.setFieldsValue({ value: 1, reason: "" });
     await loadAdjustments(adjusting.id, values.seasonId);
   }
 
@@ -363,7 +393,7 @@ export default function PlayersPage() {
     },
     {
       title: "操作",
-      width: 180,
+      width: 280,
       render: (_, player) => (
         <Space>
           <Button
@@ -381,8 +411,20 @@ export default function PlayersPage() {
             编辑
           </Button>
           <Button icon={<SlidersHorizontal size={16} />} onClick={() => openAdjustmentModal(player)}>
-            数据
+            手动加减
           </Button>
+          <Popconfirm
+            title={`确定删除球员“${player.name}”吗？`}
+            description="仅可删除没有比赛或人工数据记录的球员，删除后无法恢复。"
+            okText="确认删除"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+            onConfirm={() => deletePlayer(player)}
+          >
+            <Button danger icon={<Trash2 size={16} />} loading={deletingId === player.id}>
+              删除
+            </Button>
+          </Popconfirm>
         </Space>
       )
     }
@@ -394,7 +436,9 @@ export default function PlayersPage() {
     { title: "指标", dataIndex: "metric", render: (metric: StatMetric) => metricLabels[metric] },
     {
       title: "操作",
-      render: (_, row) => (row.operation === "SET" ? `设置为 ${row.value}` : `调整 ${row.value}`)
+      render: (_, row) => (
+        <Tag color={row.operation === "ADJUST" && row.value < 0 ? "red" : "blue"}>{formatStatAdjustmentValue(row.operation, row.value)}</Tag>
+      )
     },
     { title: "原因", dataIndex: "reason" }
   ];
@@ -446,7 +490,7 @@ export default function PlayersPage() {
       </div>
 
       <div className="section-panel">
-        <Table rowKey="id" loading={loading} columns={columns} dataSource={players} scroll={{ x: 1100 }} />
+        <Table rowKey="id" loading={loading} columns={columns} dataSource={players} scroll={{ x: 1200 }} />
       </div>
 
       <Modal
@@ -484,7 +528,7 @@ export default function PlayersPage() {
       </Modal>
 
       <Modal
-        title={adjusting ? `调整数据：${adjusting.name}` : "调整数据"}
+        title={adjusting ? `手动加减数据：${adjusting.name}` : "手动加减数据"}
         open={Boolean(adjusting)}
         onCancel={() => setAdjusting(null)}
         footer={null}
@@ -507,12 +551,12 @@ export default function PlayersPage() {
             <Form.Item name="operation" label="方式" rules={[{ required: true }]}>
               <Select
                 options={[
-                  { label: "设置为", value: "SET" },
-                  { label: "增加/减少", value: "ADJUST" }
+                  { label: "增加/减少", value: "ADJUST" },
+                  { label: "直接设置为", value: "SET" }
                 ]}
               />
             </Form.Item>
-            <Form.Item name="value" label="数值" rules={[{ required: true }]}>
+            <Form.Item name="value" label="加减数值" extra="输入正数增加，输入负数减少，例如 +2 填 2，-1 填 -1" rules={[{ required: true }]}>
               <InputNumber style={{ width: "100%" }} />
             </Form.Item>
           </div>
@@ -520,7 +564,7 @@ export default function PlayersPage() {
             <Input.TextArea rows={2} placeholder="例如：补录 7.5 队内赛第一节进球" />
           </Form.Item>
           <Button type="primary" htmlType="submit" icon={<Save size={16} />}>
-            保存数据调整
+            保存变动记录
           </Button>
         </Form>
 

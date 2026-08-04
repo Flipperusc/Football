@@ -61,6 +61,25 @@ export type PlayerStats = {
   pointsPerInternalAppearance: number;
 };
 
+export type PlayerStatAdjustment = {
+  id: string;
+  playerId: string;
+  seasonId: string;
+  metric:
+    | "INTERNAL_GOALS"
+    | "INTERNAL_ASSISTS"
+    | "INTERNAL_APPEARANCES"
+    | "INTERNAL_SEASON_POINTS"
+    | "EXTERNAL_GOALS"
+    | "EXTERNAL_ASSISTS"
+    | "EXTERNAL_APPEARANCES";
+  operation: "SET" | "ADJUST";
+  value: number;
+  reason: string;
+  createdAt: string;
+  season?: Season;
+};
+
 export type TeamPhoto = {
   id: string;
   imageUrl: string;
@@ -70,6 +89,14 @@ export type TeamPhoto = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type TeamSetting = {
+  logoUrl?: string | null;
+};
+
+export function getRequestErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
 
 export async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {

@@ -129,10 +129,26 @@ export default function MatchDaySharePage() {
     setExporting(true);
     try {
       await document.fonts.ready;
-      const dataUrl = await toPng(cardRef.current, {
+      const card = cardRef.current;
+      const exportWidth = Math.ceil(
+        Math.max(card.scrollWidth, card.getBoundingClientRect().width)
+      ) + 8;
+      const exportHeight = Math.ceil(
+        Math.max(card.scrollHeight, card.getBoundingClientRect().height)
+      ) + 2;
+      const dataUrl = await toPng(card, {
         backgroundColor: "#ffffff",
         cacheBust: true,
-        pixelRatio: 2
+        pixelRatio: 2,
+        width: exportWidth,
+        height: exportHeight,
+        style: {
+          width: `${exportWidth}px`,
+          minWidth: `${exportWidth}px`,
+          maxWidth: "none",
+          margin: "0",
+          overflow: "visible"
+        }
       });
       const link = document.createElement("a");
       link.download = "灵眸GPU-赛后战报-" + matchDay.date.slice(0, 10) + ".png";
@@ -178,7 +194,6 @@ export default function MatchDaySharePage() {
         <div>
           <span className="public-eyebrow">MATCH REPORT</span>
           <h1>赛后战报</h1>
-          <p>公开查看比赛结果，可直接下载高清图片分享到微信群。</p>
         </div>
         <div className="public-share-actions">
           <Button icon={<RefreshCw size={16} />} onClick={load} loading={loading}>刷新</Button>

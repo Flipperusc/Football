@@ -1,7 +1,7 @@
 import { mkdir } from "fs/promises";
 import path from "path";
 
-export const allowedUploadFolders = new Set(["players", "team-photos"]);
+export const allowedUploadFolders = new Set(["players", "team-photos", "team-brand"]);
 
 export const uploadContentTypes = new Map([
   [".jpg", "image/jpeg"],

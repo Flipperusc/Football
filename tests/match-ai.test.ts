@@ -150,7 +150,7 @@ describe("post-match AI parsing", () => {
     delete process.env.DEEPSEEK_API_KEY;
 
     const result = await parseMatchWithAi({
-      rawText: "\u6700\u4f73\u540e\u536b\u6b27\u5df4\u679c\u5b50\u6797",
+      rawText: "最佳后卫：欧巴，果子林",
       matchType: "INTERNAL",
       players: [
         { id: "p3", name: "\u6b27\u5df4", aliases: [] },

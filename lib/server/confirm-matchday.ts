@@ -300,6 +300,17 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
       }
     }
 
+
+    await tx.matchParseResult.create({
+      data: {
+        matchDayId: input.matchDayId,
+        rawText: matchDay.rawText ?? "",
+        parsedJson: parsed,
+        modelName: "manual-confirmation",
+        status: "SUCCESS"
+      }
+    });
+
     return tx.matchDay.update({
       where: { id: input.matchDayId },
       data: {

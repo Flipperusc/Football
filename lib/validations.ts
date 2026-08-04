@@ -92,6 +92,10 @@ export const teamPhotoCreateSchema = z.object({
 
 export const teamPhotoUpdateSchema = teamPhotoCreateSchema.partial();
 
+export const teamSettingUpdateSchema = z.object({
+  logoUrl: storedImageUrlSchema.nullable()
+});
+
 export const seasonCreateSchema = z.object({
   name: z.string().trim().min(1),
   startDate: z.coerce.date(),
