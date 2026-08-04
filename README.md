@@ -56,7 +56,7 @@ corepack pnpm dev
 
 ## 数据模型
 
-Prisma schema 位于 `prisma/schema.prisma`，迁移文件位于 `prisma/migrations/20260704000000_init/migration.sql`。
+Prisma schema 位于 `prisma/schema.prisma`，完整迁移历史位于 `prisma/migrations/`；其中 `20260804000000_player_identity_uniqueness/` 为球员名称与别名唯一性迁移。
 
 核心模型包括：
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   App,
@@ -166,6 +166,7 @@ export default function PlayersPage() {
   const [adjusting, setAdjusting] = useState<Player | null>(null);
   const [aliasInputs, setAliasInputs] = useState<Record<string, string>>({});
   const [deletingAliasId, setDeletingAliasId] = useState<string | null>(null);
+  const deleteAliasInFlight = useRef(false);
 
   async function load() {
     setLoading(true);
@@ -248,7 +249,8 @@ export default function PlayersPage() {
   }
 
   async function deleteAlias(playerId: string, aliasId: string) {
-    if (deletingAliasId === aliasId) return;
+    if (deleteAliasInFlight.current) return;
+    deleteAliasInFlight.current = true;
     setDeletingAliasId(aliasId);
     try {
       await requestJson<void>(`/api/players/${playerId}/aliases/${aliasId}`, { method: "DELETE" });
@@ -257,6 +259,7 @@ export default function PlayersPage() {
     } catch (error) {
       message.error(error instanceof Error ? error.message : "删除别名失败");
     } finally {
+      deleteAliasInFlight.current = false;
       setDeletingAliasId(null);
     }
   }
@@ -323,12 +326,12 @@ export default function PlayersPage() {
                 <Popconfirm
                   title={`确认删除别名“${alias.alias}”？`}
                   onConfirm={() => deleteAlias(player.id, alias.id)}
-                  disabled={isDeleting}
+                  disabled={deletingAliasId !== null}
                 >
                   <Button
                     aria-label={`删除别名 ${alias.alias}`}
                     danger
-                    disabled={isDeleting}
+                    disabled={deletingAliasId !== null}
                     icon={<X size={14} />}
                     loading={isDeleting}
                     size="small"
