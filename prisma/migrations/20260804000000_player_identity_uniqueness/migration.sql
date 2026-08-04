@@ -43,14 +43,36 @@ CREATE FUNCTION check_player_name_identity_conflict()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
+DECLARE
+  transaction_isolation TEXT := current_setting('transaction_isolation');
+  identity_conflict BOOLEAN;
 BEGIN
+  -- This advisory-lock protocol depends on READ COMMITTED taking a fresh
+  -- snapshot for the peer-table lookup after a lock wait. Fixed-snapshot
+  -- isolation could miss the transaction that just released the lock, so
+  -- reject it explicitly instead of allowing a cross-table conflict through.
+  IF transaction_isolation <> 'read committed' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '25000',
+      MESSAGE = 'player identity writes require READ COMMITTED transaction isolation',
+      DETAIL = format('Current transaction isolation is %s.', transaction_isolation),
+      HINT = 'Retry the player identity write in a READ COMMITTED transaction.';
+  END IF;
+
   PERFORM pg_advisory_xact_lock(hashtextextended(NEW."name", 0));
 
-  IF EXISTS (
-    SELECT 1
-    FROM "PlayerAlias"
-    WHERE "alias" = NEW."name"
-  ) THEN
+  -- TG_TABLE_SCHEMA targets the actual trigger table's schema. Identifier
+  -- placeholders prevent search_path/pg_temp shadowing, while USING keeps the
+  -- identity value out of the SQL string.
+  EXECUTE format(
+    'SELECT EXISTS (SELECT 1 FROM %I.%I WHERE "alias" = $1)',
+    TG_TABLE_SCHEMA,
+    'PlayerAlias'
+  )
+  INTO identity_conflict
+  USING NEW."name";
+
+  IF identity_conflict THEN
     RAISE EXCEPTION USING
       ERRCODE = '23505',
       MESSAGE = 'duplicate player identity value rejected by player-name trigger',
@@ -67,14 +89,36 @@ CREATE FUNCTION check_player_alias_identity_conflict()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
+DECLARE
+  transaction_isolation TEXT := current_setting('transaction_isolation');
+  identity_conflict BOOLEAN;
 BEGIN
+  -- This advisory-lock protocol depends on READ COMMITTED taking a fresh
+  -- snapshot for the peer-table lookup after a lock wait. Fixed-snapshot
+  -- isolation could miss the transaction that just released the lock, so
+  -- reject it explicitly instead of allowing a cross-table conflict through.
+  IF transaction_isolation <> 'read committed' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '25000',
+      MESSAGE = 'player identity writes require READ COMMITTED transaction isolation',
+      DETAIL = format('Current transaction isolation is %s.', transaction_isolation),
+      HINT = 'Retry the player identity write in a READ COMMITTED transaction.';
+  END IF;
+
   PERFORM pg_advisory_xact_lock(hashtextextended(NEW."alias", 0));
 
-  IF EXISTS (
-    SELECT 1
-    FROM "Player"
-    WHERE "name" = NEW."alias"
-  ) THEN
+  -- TG_TABLE_SCHEMA targets the actual trigger table's schema. Identifier
+  -- placeholders prevent search_path/pg_temp shadowing, while USING keeps the
+  -- identity value out of the SQL string.
+  EXECUTE format(
+    'SELECT EXISTS (SELECT 1 FROM %I.%I WHERE "name" = $1)',
+    TG_TABLE_SCHEMA,
+    'Player'
+  )
+  INTO identity_conflict
+  USING NEW."alias";
+
+  IF identity_conflict THEN
     RAISE EXCEPTION USING
       ERRCODE = '23505',
       MESSAGE = 'duplicate player identity value rejected by player-alias trigger',
