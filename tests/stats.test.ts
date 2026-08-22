@@ -3,7 +3,8 @@ import {
   allocatePlayerMatchdayPoints,
   calculateSeasonPlayerStats,
   calculateSectionPoints,
-  calculateTeamResults
+  calculateTeamResults,
+  rankGoalkeepers
 } from "@/lib/stats/calculate";
 
 describe("football statistics", () => {
@@ -131,5 +132,42 @@ describe("football statistics", () => {
       goalsPerAppearance: 0.5,
       pointsPerInternalAppearance: 3
     });
+  });
+
+  it("ranks current goalkeepers by internal points, attendance, then name", () => {
+    const stats = calculateSeasonPlayerStats({
+      players: [
+        { id: "g1", name: "赵门", position: "门将" },
+        { id: "g2", name: "阿门", position: "门将" },
+        { id: "g3", name: "零场", position: " 门将 " },
+        { id: "p1", name: "前锋", position: "前锋" },
+        { id: "p2", name: "守门员文本", position: "守门员" },
+        { id: "p3", name: "空位置", position: null }
+      ],
+      matchDays: [
+        { id: "m1", seasonId: "s1", type: "INTERNAL" },
+        { id: "m2", seasonId: "s1", type: "INTERNAL" }
+      ],
+      assignments: [
+        { matchDayId: "m1", teamColor: "WHITE", playerId: "g1" },
+        { matchDayId: "m1", teamColor: "WHITE", playerId: "g2" },
+        { matchDayId: "m2", teamColor: "RED", playerId: "g2" },
+        { matchDayId: "m1", teamColor: "WHITE", playerId: "p1" }
+      ],
+      goalEvents: [],
+      playerPoints: [
+        { matchDayId: "m1", playerId: "g1", basePoints: 3, bonusPoints: 0, totalPoints: 3 },
+        { matchDayId: "m1", playerId: "g2", basePoints: 1, bonusPoints: 0, totalPoints: 1 },
+        { matchDayId: "m2", playerId: "g2", basePoints: 2, bonusPoints: 0, totalPoints: 2 },
+        { matchDayId: "m1", playerId: "p1", basePoints: 3, bonusPoints: 0, totalPoints: 3 }
+      ]
+    });
+
+    expect(rankGoalkeepers(stats).map((row) => row.playerId)).toEqual(["g2", "g1", "g3"]);
+    expect(rankGoalkeepers(stats).find((row) => row.playerId === "g3")).toMatchObject({
+      internalAppearances: 0,
+      internalSeasonPoints: 0
+    });
+    expect(stats.find((row) => row.playerId === "g1")?.internalSeasonPoints).toBe(3);
   });
 });

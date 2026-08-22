@@ -12,8 +12,12 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
-import { Button, Layout, Menu } from "antd";
+import { useEffect, useState, type ReactNode } from "react";
+import { Alert, Button, Layout, Menu } from "antd";
+import {
+  AI_AVAILABILITY_EVENT,
+  type AiAvailabilityEventDetail
+} from "@/lib/client-types";
 
 const { Sider, Content } = Layout;
 
@@ -46,8 +50,27 @@ function selectedKey(pathname: string) {
   return "/admin";
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({
+  children,
+  aiConfigured
+}: {
+  children: ReactNode;
+  aiConfigured: boolean;
+}) {
   const pathname = usePathname();
+  const [aiAvailable, setAiAvailable] = useState(aiConfigured);
+
+  useEffect(() => {
+    function handleAiAvailability(event: Event) {
+      const detail = (event as CustomEvent<AiAvailabilityEventDetail>).detail;
+      if (typeof detail?.available === "boolean") {
+        setAiAvailable(detail.available);
+      }
+    }
+
+    window.addEventListener(AI_AVAILABILITY_EVENT, handleAiAvailability);
+    return () => window.removeEventListener(AI_AVAILABILITY_EVENT, handleAiAvailability);
+  }, []);
 
   if (pathname === "/" || /^\/matchdays\/[^/]+\/share$/.test(pathname)) {
     return <>{children}</>;
@@ -68,6 +91,15 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Button icon={<Home size={16} />}>返回前台</Button>
           </Link>
         </div>
+        {!aiAvailable ? (
+          <Alert
+            className="ai-unavailable-alert"
+            type="warning"
+            showIcon
+            message="AI 服务当前不可用"
+            description="系统已自动切换为本地规则解析，仍可继续录入；识别结果可能不完整，请重点人工确认。"
+          />
+        ) : null}
         {children}
       </Content>
     </Layout>

@@ -104,6 +104,17 @@ function rankBy(rows: PlayerStats[], valueGetter: (row: PlayerStats) => number) 
   });
 }
 
+function rankGoalkeeperRows(rows: PlayerStats[]) {
+  return [...rows]
+    .filter((row) => row.position?.trim() === "门将")
+    .sort(
+      (a, b) =>
+        b.internalSeasonPoints - a.internalSeasonPoints ||
+        b.internalAppearances - a.internalAppearances ||
+        a.name.localeCompare(b.name, "zh-CN")
+    );
+}
+
 function RankingBoard({
   definition, expanded, onToggleExpanded, onOpenPlayer
 }: {
@@ -340,6 +351,15 @@ export default function PublicTeamPage() {
     }
     return [
       make("internal-points", "队内积分榜", "按队内赛名次获得的个人赛季积分", <Medal size={18} />, (row) => row.internalSeasonPoints, "分"),
+      {
+        key: "internal-goalkeepers",
+        title: "门将榜",
+        description: "当前位置为门将的球员，按队内积分和出勤排序",
+        icon: <Shield size={18} />,
+        rows: rankGoalkeeperRows(stats),
+        valueGetter: (row) => row.internalSeasonPoints,
+        metricLabel: "分"
+      },
       make("internal-goals", "队内射手榜", "队内赛进球统计", <Target size={18} />, (row) => row.internalGoals, "球"),
       make("internal-assists", "队内助攻榜", "队内赛助攻统计", <Handshake size={18} />, (row) => row.internalAssists, "助"),
       make("internal-appearances", "队内出勤榜", "队内赛阵容出勤次数", <Activity size={18} />, (row) => row.internalAppearances, "场"),

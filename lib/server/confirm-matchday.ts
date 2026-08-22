@@ -14,6 +14,13 @@ import type {
   TeamColor
 } from "@/lib/stats/types";
 
+type InternalTeamColor = Exclude<TeamColor, "EXTERNAL">;
+
+type ManualTeamRank = {
+  teamColor: InternalTeamColor;
+  rank: number;
+};
+
 type ConfirmInput = {
   matchDayId: string;
   parsedJson: unknown;
@@ -23,12 +30,23 @@ type ConfirmInput = {
     role?: "PLAYER" | "GOALKEEPER";
     isCaptain?: boolean;
   }[];
+  manualTeamRanks?: ManualTeamRank[];
   saveAliases?: {
     playerId: string;
     rawName: string;
     aliasType: "NICKNAME" | "TYPO" | "SHORT_NAME" | "MANUAL";
   }[];
 };
+
+export class TeamRankingConfirmationRequired extends Error {
+  readonly status = 409;
+  readonly code = "TEAM_RANKING_CONFIRMATION_REQUIRED";
+
+  constructor(readonly teamResults: ReturnType<typeof calculateTeamResults>) {
+    super("三队自动排名仍有并列，请人工确认第 1、2、3 名后再入库");
+    this.name = "TeamRankingConfirmationRequired";
+  }
+}
 
 const colorToDb = {
   red: "RED",
@@ -48,12 +66,63 @@ function collectMissingPlayers(parsed: ParseResult) {
     .map((event) => event.rawText);
 }
 
+function applyManualTeamRanks(
+  teamResults: ReturnType<typeof calculateTeamResults>,
+  manualTeamRanks: ManualTeamRank[]
+) {
+  const rankByTeam = new Map(manualTeamRanks.map((row) => [row.teamColor, row.rank]));
+  const ranks = manualTeamRanks.map((row) => row.rank);
+  if (
+    manualTeamRanks.length !== 3 ||
+    rankByTeam.size !== 3 ||
+    new Set(ranks).size !== 3 ||
+    ranks.some((rank) => rank < 1 || rank > 3)
+  ) {
+    throw new Error("人工排名必须完整包含红、蓝、白三队，且第 1、2、3 名不能重复");
+  }
+
+  return teamResults
+    .map((result) => {
+      const rank = rankByTeam.get(result.teamColor as InternalTeamColor);
+      if (!rank) throw new Error(`缺少 ${result.teamColor} 队的人工排名`);
+      return {
+        ...result,
+        rank,
+        seasonPointsAwarded: 4 - rank,
+        needsManualReview: false
+      };
+    })
+    .sort((left, right) => (left.rank ?? 99) - (right.rank ?? 99));
+}
+
 export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput) {
   const parsed = parseResultSchema.parse(input.parsedJson);
   const missingPlayers = collectMissingPlayers(parsed);
   if (missingPlayers.length > 0) {
     throw new Error(`仍有未匹配球员，不能确认入库：${missingPlayers.join("、")}`);
   }
+
+  const typedGames: InternalGameInput[] =
+    parsed.matchType === "internal"
+      ? parsed.games.map((game) => ({
+          matchDayId: input.matchDayId,
+          sectionNo: game.sectionNo,
+          teamA: colorToDb[game.teamA],
+          teamB: colorToDb[game.teamB],
+          scoreA: game.scoreA,
+          scoreB: game.scoreB
+        }))
+      : [];
+  const calculatedTeamResults =
+    parsed.matchType === "internal" ? calculateTeamResults(typedGames) : [];
+  const needsManualRanking = calculatedTeamResults.some((result) => result.needsManualReview);
+  if (parsed.matchType === "internal" && needsManualRanking && !input.manualTeamRanks) {
+    throw new TeamRankingConfirmationRequired(calculatedTeamResults);
+  }
+  const confirmedTeamResults =
+    needsManualRanking && input.manualTeamRanks
+      ? applyManualTeamRanks(calculatedTeamResults, input.manualTeamRanks)
+      : calculatedTeamResults;
 
   return prisma.$transaction(async (tx) => {
     const matchDay = await tx.matchDay.findUnique({
@@ -208,15 +277,7 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
         }
       }
 
-      const typedGames: InternalGameInput[] = parsed.games.map((game) => ({
-        matchDayId: input.matchDayId,
-        sectionNo: game.sectionNo,
-        teamA: colorToDb[game.teamA],
-        teamB: colorToDb[game.teamB],
-        scoreA: game.scoreA,
-        scoreB: game.scoreB
-      }));
-      const teamResults = calculateTeamResults(typedGames);
+      const teamResults = confirmedTeamResults;
       await tx.teamMatchdayResult.createMany({
         data: teamResults.map((result) => ({
           matchDayId: input.matchDayId,

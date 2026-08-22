@@ -13,6 +13,7 @@ type RankingPayload = {
   assists: PlayerStats[];
   appearances: PlayerStats[];
   internalPoints: PlayerStats[];
+  goalkeepers: PlayerStats[];
   bestDefenders: PlayerStats[];
   goalsPerAppearance: PlayerStats[];
   pointsPerInternalAppearance: PlayerStats[];
@@ -54,6 +55,20 @@ function topColumns(metricTitle: string, metricKey: keyof PlayerStats): ColumnsT
     { title: metricTitle, dataIndex: metricKey }
   ];
 }
+
+const goalkeeperColumns: ColumnsType<PlayerStats> = [
+  { title: "排名", width: 80, render: (_, __, index) => index + 1 },
+  {
+    title: "球员",
+    dataIndex: "name",
+    render: (_, row) => <Link href={`/players/${row.playerId}`}>{row.name}</Link>
+  },
+  { title: "队内积分", dataIndex: "internalSeasonPoints" },
+  { title: "队内出勤", dataIndex: "internalAppearances" },
+  { title: "队内进球", dataIndex: "internalGoals" },
+  { title: "队内助攻", dataIndex: "internalAssists" },
+  { title: "场均积分", dataIndex: "pointsPerInternalAppearance" }
+];
 
 export default function RankingsPage() {
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -194,6 +209,21 @@ export default function RankingsPage() {
                   loading={loading}
                   columns={topColumns("积分", "internalSeasonPoints")}
                   dataSource={rankings?.internalPoints ?? []}
+                />
+              </div>
+            )
+          },
+          {
+            key: "goalkeepers",
+            label: "门将榜",
+            children: (
+              <div className="section-panel">
+                <Table
+                  rowKey="playerId"
+                  loading={loading}
+                  columns={goalkeeperColumns}
+                  dataSource={rankings?.goalkeepers ?? []}
+                  locale={{ emptyText: "暂无位置为门将的球员" }}
                 />
               </div>
             )

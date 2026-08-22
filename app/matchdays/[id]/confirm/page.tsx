@@ -10,6 +10,7 @@ import {
   Descriptions,
   Input,
   InputNumber,
+  Modal,
   Select,
   Space,
   Table,
@@ -96,6 +97,20 @@ type AliasDraft = {
   aliasType: "MANUAL" | "NICKNAME" | "TYPO" | "SHORT_NAME";
 };
 
+type InternalTeamColor = "RED" | "BLUE" | "WHITE";
+
+type TeamRankingPreview = {
+  teamColor: InternalTeamColor;
+  matchPoints: number;
+  goalDifference: number;
+  rank: number | null;
+};
+
+type ManualTeamRank = {
+  teamColor: InternalTeamColor;
+  rank: number;
+};
+
 const teamOptions = [
   { label: "红队", value: "red" },
   { label: "蓝队", value: "blue" },
@@ -108,6 +123,12 @@ const teamLabels: Record<AiTeamColor, string> = {
   blue: "蓝队",
   white: "白队",
   external: "队外"
+};
+
+const internalTeamLabels: Record<InternalTeamColor, string> = {
+  RED: "红队",
+  BLUE: "蓝队",
+  WHITE: "白队"
 };
 
 function cloneParsed(parsed: ParsedMatch) {
@@ -157,6 +178,12 @@ export default function ConfirmMatchDayPage() {
   const [parsed, setParsed] = useState<ParsedMatch | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pendingTeamResults, setPendingTeamResults] = useState<TeamRankingPreview[]>([]);
+  const [manualTeamRanks, setManualTeamRanks] = useState<Record<InternalTeamColor, number>>({
+    RED: 1,
+    BLUE: 2,
+    WHITE: 3
+  });
   const [loadError, setLoadError] = useState<string>();
   const [aliasDrafts, setAliasDrafts] = useState<AliasDraft[]>([]);
   const [aliasDraft, setAliasDraft] = useState<AliasDraft>({
@@ -395,22 +422,52 @@ export default function ConfirmMatchDayPage() {
     router.push(`${entryPath}?edit=${params.id}`);
   }
 
-  async function confirm() {
+  async function confirm(ranks?: ManualTeamRank[]) {
     const error = validateBeforeConfirm();
     if (error) {
       message.error(error);
       return;
     }
+    if (ranks && new Set(ranks.map((row) => row.rank)).size !== 3) {
+      message.error("第 1、2、3 名不能重复");
+      return;
+    }
 
     setSaving(true);
     try {
-      await requestJson(`/api/matchdays/${params.id}/confirm`, {
+      const response = await fetch(`/api/matchdays/${params.id}/confirm`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           parsedJson: parsed,
-          saveAliases: aliasDrafts
+          saveAliases: aliasDrafts,
+          manualTeamRanks: ranks
         })
       });
+      const payload = (await response.json().catch(() => ({}))) as {
+        code?: string;
+        message?: string;
+        teamResults?: TeamRankingPreview[];
+      };
+
+      if (
+        response.status === 409 &&
+        payload.code === "TEAM_RANKING_CONFIRMATION_REQUIRED" &&
+        payload.teamResults?.length === 3
+      ) {
+        setPendingTeamResults(payload.teamResults);
+        setManualTeamRanks(
+          Object.fromEntries(
+            payload.teamResults.map((result) => [result.teamColor, result.rank ?? 3])
+          ) as Record<InternalTeamColor, number>
+        );
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(payload.message ?? `确认失败：${response.status}`);
+      }
+
+      setPendingTeamResults([]);
       message.success(matchDay?.parseStatus === "CONFIRMED" ? "修改已保存并重新入库" : "已确认入库");
       router.push(`/matchdays/${params.id}/share`);
     } catch (submitError) {
@@ -657,7 +714,7 @@ export default function ConfirmMatchDayPage() {
           <Button icon={<ArrowLeft size={16} />} onClick={returnToEdit} disabled={!matchDay}>
             返回修改
           </Button>
-          <Button type="primary" icon={<Save size={16} />} onClick={confirm} loading={saving}>
+          <Button type="primary" icon={<Save size={16} />} onClick={() => void confirm()} loading={saving}>
             {isEditingConfirmed ? "保存修改并重新入库" : "确认入库"}
           </Button>
         </Space>
@@ -816,6 +873,63 @@ export default function ConfirmMatchDayPage() {
           ))}
         </Space>
       </div>
+      <Modal
+        title="人工确认三队排名"
+        open={pendingTeamResults.length === 3}
+        okText="确认排名并入库"
+        cancelText="返回修改比分"
+        confirmLoading={saving}
+        maskClosable={false}
+        onCancel={() => {
+          if (!saving) setPendingTeamResults([]);
+        }}
+        onOk={() =>
+          void confirm(
+            (["RED", "BLUE", "WHITE"] as InternalTeamColor[]).map((teamColor) => ({
+              teamColor,
+              rank: manualTeamRanks[teamColor]
+            }))
+          )
+        }
+      >
+        <Alert
+          type="warning"
+          showIcon
+          message="自动规则无法完全区分名次"
+          description="当前比赛尚未入库。请为红、蓝、白三队分别指定第 1、2、3 名，确认后才会写入比赛结果和球员积分。"
+          style={{ marginBottom: 16 }}
+        />
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          {[...pendingTeamResults]
+            .sort((left, right) => left.teamColor.localeCompare(right.teamColor))
+            .map((result) => (
+              <div
+                key={result.teamColor}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "72px minmax(0, 1fr) 108px",
+                  alignItems: "center",
+                  gap: 12
+                }}
+              >
+                <Typography.Text strong>{internalTeamLabels[result.teamColor]}</Typography.Text>
+                <Typography.Text type="secondary">
+                  比赛积分 {result.matchPoints}，净胜球 {result.goalDifference > 0 ? "+" : ""}
+                  {result.goalDifference}
+                </Typography.Text>
+                <Select
+                  aria-label={`${internalTeamLabels[result.teamColor]}排名`}
+                  value={manualTeamRanks[result.teamColor]}
+                  options={[1, 2, 3].map((rank) => ({ label: `第 ${rank} 名`, value: rank }))}
+                  onChange={(rank) =>
+                    setManualTeamRanks((current) => ({ ...current, [result.teamColor]: rank }))
+                  }
+                />
+              </div>
+            ))}
+        </Space>
+      </Modal>
+
     </>
   );
 }

@@ -228,6 +228,7 @@ export function calculateSeasonPlayerStats(input: {
     return {
       playerId: player.id,
       name: player.name,
+      position: player.position ?? null,
       internalGoals,
       internalAssists,
       internalAppearances,
@@ -255,4 +256,15 @@ export function rankPlayers(stats: PlayerSeasonStats[], key: keyof PlayerSeasonS
     }
     return a.name.localeCompare(b.name);
   });
+}
+
+export function rankGoalkeepers(stats: PlayerSeasonStats[]) {
+  return stats
+    .filter((row) => row.position?.trim() === "门将")
+    .sort(
+      (a, b) =>
+        b.internalSeasonPoints - a.internalSeasonPoints ||
+        b.internalAppearances - a.internalAppearances ||
+        a.name.localeCompare(b.name, "zh-CN")
+    );
 }

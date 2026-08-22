@@ -13,6 +13,37 @@ describe("requestJson", () => {
       requestJson<void>("/api/players/p1/aliases/a1", { method: "DELETE" })
     ).resolves.toBeUndefined();
   });
+
+  it("reports AI unavailability when an API response uses the local fallback", async () => {
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal("window", { dispatchEvent });
+    vi.stubGlobal(
+      "CustomEvent",
+      class TestCustomEvent {
+        constructor(
+          public type: string,
+          public init: { detail: { available: boolean } }
+        ) {}
+      }
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ parsed: {}, usedFallback: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        })
+      )
+    );
+
+    await requestJson("/api/roster/parse", { method: "POST" });
+
+    expect(dispatchEvent).toHaveBeenCalledOnce();
+    expect(dispatchEvent.mock.calls[0][0]).toMatchObject({
+      type: "football:ai-availability",
+      init: { detail: { available: false } }
+    });
+  });
 });
 
 describe("getRequestErrorMessage", () => {

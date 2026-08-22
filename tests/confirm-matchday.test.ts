@@ -1,6 +1,9 @@
 import type { PrismaClient } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
-import { confirmMatchDay } from "@/lib/server/confirm-matchday";
+import {
+  confirmMatchDay,
+  TeamRankingConfirmationRequired
+} from "@/lib/server/confirm-matchday";
 import { PlayerIdentityConflictError } from "@/lib/server/player-identities";
 
 describe("confirmMatchDay identity preflight", () => {
@@ -66,4 +69,29 @@ describe("confirmMatchDay identity preflight", () => {
     expect(formalDeletes.award).not.toHaveBeenCalled();
     expect(formalDeletes.internalGame).not.toHaveBeenCalled();
   });
+  it("does not start a transaction before unresolved team rankings are confirmed", async () => {
+    const prisma = {
+      $transaction: vi.fn()
+    } as unknown as PrismaClient;
+
+    await expect(
+      confirmMatchDay(prisma, {
+        matchDayId: "match-1",
+        parsedJson: {
+          matchType: "internal",
+          games: [
+            { sectionNo: 1, teamA: "white", teamB: "blue", scoreA: 0, scoreB: 0, events: [], rawText: "" },
+            { sectionNo: 2, teamA: "white", teamB: "red", scoreA: 0, scoreB: 0, events: [], rawText: "" },
+            { sectionNo: 3, teamA: "red", teamB: "blue", scoreA: 0, scoreB: 0, events: [], rawText: "" }
+          ],
+          awards: [],
+          bonusPoints: [],
+          uncertainItems: []
+        }
+      })
+    ).rejects.toBeInstanceOf(TeamRankingConfirmationRequired);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
 });

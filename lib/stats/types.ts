@@ -4,6 +4,7 @@ export type MatchType = "INTERNAL" | "EXTERNAL";
 export type PlayerInput = {
   id: string;
   name: string;
+  position?: string | null;
 };
 
 export type MatchDayInput = {
@@ -72,6 +73,7 @@ export type TeamResult = {
 export type PlayerSeasonStats = {
   playerId: string;
   name: string;
+  position?: string | null;
   internalGoals: number;
   internalAssists: number;
   internalAppearances: number;

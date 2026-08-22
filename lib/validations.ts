@@ -142,6 +142,29 @@ export const rosterParseRequestSchema = z.object({
 export const confirmRequestSchema = z.object({
   parsedJson: z.unknown(),
   teamAssignments: z.array(teamAssignmentInputSchema).optional(),
+  manualTeamRanks: z
+    .array(
+      z.object({
+        teamColor: z.enum(["RED", "BLUE", "WHITE"]),
+        rank: z.number().int().min(1).max(3)
+      })
+    )
+    .length(3)
+    .superRefine((rows, context) => {
+      if (new Set(rows.map((row) => row.teamColor)).size !== 3) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "红、蓝、白三队必须各设置一次排名"
+        });
+      }
+      if (new Set(rows.map((row) => row.rank)).size !== 3) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "第 1、2、3 名不能重复"
+        });
+      }
+    })
+    .optional(),
   saveAliases: z
     .array(
       z.object({

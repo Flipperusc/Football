@@ -58,6 +58,10 @@ a {
   margin-bottom: 12px;
 }
 
+.ai-unavailable-alert {
+  margin-bottom: 16px;
+}
+
 .page-title {
   display: flex;
   align-items: center;

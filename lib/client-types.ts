@@ -44,6 +44,7 @@ export type MatchDay = {
 export type PlayerStats = {
   playerId: string;
   name: string;
+  position?: string | null;
   avatarUrl?: string | null;
   internalGoals: number;
   internalAssists: number;
@@ -94,6 +95,22 @@ export type TeamSetting = {
   logoUrl?: string | null;
 };
 
+export const AI_AVAILABILITY_EVENT = "football:ai-availability";
+
+export type AiAvailabilityEventDetail = {
+  available: boolean;
+};
+
+function reportAiAvailability(available: boolean) {
+  if (typeof window === "undefined") return;
+
+  window.dispatchEvent(
+    new CustomEvent<AiAvailabilityEventDetail>(AI_AVAILABILITY_EVENT, {
+      detail: { available }
+    })
+  );
+}
+
 export function getRequestErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
@@ -122,5 +139,16 @@ export async function requestJson<T>(url: string, init?: RequestInit): Promise<T
     throw new Error(message ?? `请求失败：${response.status}`);
   }
   if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  const data = (await response.json()) as T;
+
+  if (
+    data &&
+    typeof data === "object" &&
+    "usedFallback" in data &&
+    typeof data.usedFallback === "boolean"
+  ) {
+    reportAiAvailability(!data.usedFallback);
+  }
+
+  return data;
 }

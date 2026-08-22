@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   App,
+  AutoComplete,
   Button,
   Form,
   Input,
@@ -35,6 +36,13 @@ type PlayerFormValues = {
   status?: "ACTIVE" | "INACTIVE";
   aliasesText?: string;
 };
+
+const positionOptions = [
+  { value: "前锋" },
+  { value: "中场" },
+  { value: "后卫" },
+  { value: "门将" }
+];
 
 type StatMetric =
   | "INTERNAL_GOALS"
@@ -466,7 +474,7 @@ export default function PlayersPage() {
               <InputNumber min={1} style={{ width: "100%" }} />
             </Form.Item>
             <Form.Item name="position" label="位置">
-              <Input placeholder="前锋 / 中场 / 后卫 / 门将" />
+              <AutoComplete options={positionOptions} placeholder="选择或输入位置" />
             </Form.Item>
             <Form.Item name="status" label="状态" initialValue="ACTIVE">
               <Select
@@ -508,7 +516,7 @@ export default function PlayersPage() {
             <InputNumber min={1} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item name="position" label="位置">
-            <Input />
+            <AutoComplete options={positionOptions} placeholder="选择或输入位置" />
           </Form.Item>
           <Form.Item name="avatarUrl" label="头像">
             <AvatarUpload />

@@ -35,7 +35,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="zh-CN">
       <body>
         <Providers>
-          <AppShell>{children}</AppShell>
+          <AppShell aiConfigured={Boolean(process.env.DEEPSEEK_API_KEY?.trim())}>
+            {children}
+          </AppShell>
         </Providers>
       </body>
     </html>

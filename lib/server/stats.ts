@@ -1,5 +1,9 @@
 import { prisma } from "@/lib/prisma";
-import { calculateSeasonPlayerStats, rankPlayers } from "@/lib/stats/calculate";
+import {
+  calculateSeasonPlayerStats,
+  rankGoalkeepers,
+  rankPlayers
+} from "@/lib/stats/calculate";
 import { isBestDefenderAwardName } from "@/lib/stats/awards";
 import type {
   AwardInput,
@@ -100,7 +104,8 @@ export async function loadSeasonStats(seasonId: string) {
 
   const typedPlayers: PlayerInput[] = players.map((player) => ({
     id: player.id,
-    name: player.name
+    name: player.name,
+    position: player.position
   }));
   const avatarUrlByPlayerId = new Map(players.map((player) => [player.id, player.avatarUrl]));
   const typedMatchDays: MatchDayInput[] = matchDays.map((matchDay) => ({
@@ -188,6 +193,7 @@ export async function loadSeasonStats(seasonId: string) {
       assists: rankPlayers(playerStats, "totalAssists"),
       appearances: rankPlayers(playerStats, "totalAppearances"),
       internalPoints: rankPlayers(playerStats, "internalSeasonPoints"),
+      goalkeepers: rankGoalkeepers(playerStats),
       bestDefenders: rankPlayers(playerStats, "bestDefenderAwards"),
       goalsPerAppearance: rankPlayers(playerStats, "goalsPerAppearance"),
       pointsPerInternalAppearance: rankPlayers(playerStats, "pointsPerInternalAppearance")
