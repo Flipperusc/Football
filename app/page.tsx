@@ -7,11 +7,13 @@ import { useRouter } from "next/navigation";
 import { App, Button, Drawer, Empty, Form, Input, Modal, Segmented, Select, Skeleton, Tag } from "antd";
 import {
   Activity, ArrowRight, CalendarCheck2, ChevronDown, ChevronUp, Handshake, Images,
-  LockKeyhole, Medal, RefreshCw, Search, Shield, Sparkles, Target, TrendingUp, Trophy, UsersRound
+  LockKeyhole, Medal, RefreshCw, ScrollText, Search, Shield, Sparkles, Target, TrendingUp, Trophy, UsersRound
 } from "lucide-react";
+import { RankingRulesModal } from "@/components/RankingRulesModal";
 import type { Player, PlayerStats, Season, TeamPhoto, TeamSetting } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
 import { getDisplayImageUrl } from "@/lib/image-url";
+import { getRankingRule } from "@/lib/ranking-rules";
 import type { PlayerActivity } from "@/lib/stats/player-activity";
 
 type LoginValues = { username: string; password: string };
@@ -207,6 +209,7 @@ export default function PublicTeamPage() {
   const [rosterExpanded, setRosterExpanded] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<Player>();
   const [loginOpen, setLoginOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string>();
@@ -323,16 +326,19 @@ export default function PublicTeamPage() {
       valueGetter: (row: PlayerStats) => number,
       metricLabel: string,
       formatter?: (value: number) => string
-    ): RankingDefinition => ({
-      key,
-      title,
-      description,
-      icon,
-      rows: rankBy(stats, valueGetter),
-      valueGetter,
-      metricLabel,
-      formatter
-    });
+    ): RankingDefinition => {
+      const rule = getRankingRule(key);
+      return {
+        key,
+        title: rule?.title ?? title,
+        description: rule?.description ?? description,
+        icon,
+        rows: rankBy(stats, valueGetter),
+        valueGetter,
+        metricLabel,
+        formatter
+      };
+    };
 
     if (rankingScope === "all") {
       return [
@@ -353,8 +359,8 @@ export default function PublicTeamPage() {
       make("internal-points", "队内积分榜", "按队内赛名次获得的个人赛季积分", <Medal size={18} />, (row) => row.internalSeasonPoints, "分"),
       {
         key: "internal-goalkeepers",
-        title: "门将榜",
-        description: "当前位置为门将的球员，按队内积分和出勤排序",
+        title: getRankingRule("internal-goalkeepers")?.title ?? "门将榜",
+        description: getRankingRule("internal-goalkeepers")?.description ?? "按队内积分和出勤排序",
         icon: <Shield size={18} />,
         rows: rankGoalkeeperRows(stats),
         valueGetter: (row) => row.internalSeasonPoints,
@@ -458,6 +464,9 @@ export default function PublicTeamPage() {
           <div className="public-hero-actions">
             <a className="public-primary-link" href="#rankings">查看赛季榜单 <ArrowRight size={16} /></a>
             <a className="public-secondary-link" href="#players">寻找球员</a>
+            <button className="public-secondary-link public-rules-trigger" type="button" onClick={() => setRulesOpen(true)}>
+              <ScrollText size={16} />规则
+            </button>
           </div>
         </div>
 
@@ -718,6 +727,7 @@ export default function PublicTeamPage() {
         ) : null}
       </Drawer>
 
+      <RankingRulesModal open={rulesOpen} onClose={() => setRulesOpen(false)} />
       <Modal title="管理员登录" open={loginOpen} footer={null} onCancel={() => setLoginOpen(false)} destroyOnClose>
         <Form<LoginValues> layout="vertical" onFinish={login}>
           <Form.Item name="username" label="管理员账号" rules={[{ required: true, message: "请输入管理员账号" }]}><Input autoComplete="username" /></Form.Item>

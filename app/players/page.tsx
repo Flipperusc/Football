@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   App,
@@ -18,11 +18,12 @@ import {
   Upload
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Plus, Save, SlidersHorizontal, Trash2, UserPlus, X } from "lucide-react";
+import { Plus, Save, Search, SlidersHorizontal, Trash2, UserPlus, X } from "lucide-react";
 import { PlayerBulkImport } from "@/components/PlayerBulkImport";
 import type { Player, Season } from "@/lib/client-types";
 import { getRequestErrorMessage, requestJson } from "@/lib/client-types";
 import { getDisplayImageUrl, normalizeImageUrl } from "@/lib/image-url";
+import { filterPlayersByName } from "@/lib/player-search";
 import {
   formatStatAdjustmentValue,
   statAdjustmentMetricLabels
@@ -168,6 +169,7 @@ export default function PlayersPage() {
   const [editForm] = Form.useForm<PlayerFormValues>();
   const [adjustmentForm] = Form.useForm<AdjustmentFormValues>();
   const [players, setPlayers] = useState<Player[]>([]);
+  const [playerSearch, setPlayerSearch] = useState("");
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [adjustments, setAdjustments] = useState<StatAdjustment[]>([]);
   const [loading, setLoading] = useState(false);
@@ -325,6 +327,11 @@ export default function PlayersPage() {
     adjustmentForm.setFieldsValue({ value: 1, reason: "" });
     await loadAdjustments(adjusting.id, values.seasonId);
   }
+  const filteredPlayers = useMemo(
+    () => filterPlayersByName(players, playerSearch),
+    [playerSearch, players]
+  );
+
 
   const columns: ColumnsType<Player> = [
     {
@@ -498,7 +505,30 @@ export default function PlayersPage() {
       </div>
 
       <div className="section-panel">
-        <Table rowKey="id" loading={loading} columns={columns} dataSource={players} scroll={{ x: 1200 }} />
+        <div className="toolbar" style={{ marginBottom: 16 }}>
+          <Input
+            prefix={<Search size={16} />}
+            allowClear
+            value={playerSearch}
+            onChange={(event) => setPlayerSearch(event.target.value)}
+            placeholder="搜索球员姓名或别名"
+            aria-label="搜索球员姓名或别名"
+            style={{ width: "min(420px, 100%)" }}
+          />
+          <span className="muted">
+            {playerSearch.trim()
+              ? `找到 ${filteredPlayers.length} 名球员`
+              : `共 ${players.length} 名球员`}
+          </span>
+        </div>
+        <Table
+          rowKey="id"
+          loading={loading}
+          columns={columns}
+          dataSource={filteredPlayers}
+          locale={{ emptyText: playerSearch.trim() ? "未找到匹配的球员" : "暂无球员" }}
+          scroll={{ x: 1200 }}
+        />
       </div>
 
       <Modal
