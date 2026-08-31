@@ -101,6 +101,18 @@ export type AiAvailabilityEventDetail = {
   available: boolean;
 };
 
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 function reportAiAvailability(available: boolean) {
   if (typeof window === "undefined") return;
 
@@ -115,6 +127,17 @@ export function getRequestErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function defaultHttpErrorMessage(status: number, url: string) {
+  if (status === 504) {
+    return url.includes("/api/matchdays/") && url.endsWith("/parse")
+      ? "服务器等待 DeepSeek 响应超时。比赛信息已经保存，请点击“重新解析”再次尝试。"
+      : "服务器等待 DeepSeek 响应超时，请稍后重试。";
+  }
+  if (status === 502) return "上游服务响应异常，请稍后重试。";
+  if (status === 503) return "服务暂时不可用，请稍后重试。";
+  return `请求失败：${status}`;
+}
+
 export async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -126,17 +149,24 @@ export async function requestJson<T>(url: string, init?: RequestInit): Promise<T
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     let message: string | undefined;
+    let code: string | undefined;
 
     if (text) {
       try {
-        const parsed = JSON.parse(text) as { message?: string };
+        const parsed = JSON.parse(text) as { message?: string; code?: string };
         message = parsed.message;
+        code = parsed.code;
       } catch {
-        message = text;
+        const looksLikeHtml = /<!doctype\s+html|<html[\s>]|<body[\s>]/i.test(text);
+        if (!looksLikeHtml && text.length <= 300) message = text;
       }
     }
 
-    throw new Error(message ?? `请求失败：${response.status}`);
+    throw new ApiRequestError(
+      message ?? defaultHttpErrorMessage(response.status, url),
+      response.status,
+      code
+    );
   }
   if (response.status === 204) return undefined as T;
   const data = (await response.json()) as T;

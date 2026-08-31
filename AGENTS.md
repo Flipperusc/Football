@@ -18,7 +18,7 @@
 - PostgreSQL
 - Prisma 5
 - Zod
-- DeepSeek 服务端解析，缺少 Key 或调用失败时有本地规则解析 fallback
+- DeepSeek 服务端解析；只有未配置 Key 的本地开发环境使用规则 fallback，配置 Key 后调用失败返回明确错误
 - Vitest
 - pnpm 9
 
@@ -43,6 +43,8 @@ Windows 本地快速启动入口是 `start.bat`，实际逻辑在 `scripts/start
 - `DATABASE_URL`：PostgreSQL 连接地址。
 - `DEEPSEEK_API_KEY`：DeepSeek API Key，只能在服务端使用。
 - `DEEPSEEK_MODEL`：DeepSeek 模型名。
+- `DEEPSEEK_ATTEMPT_TIMEOUT_MS`：DeepSeek 单次请求超时，默认 45000 毫秒。
+- `DEEPSEEK_MAX_TOKENS`：DeepSeek 最大输出 token 数，默认 4096。
 - `ADMIN_USERNAME`：后台管理员账号。
 - `ADMIN_PASSWORD`：后台管理员密码。
 - `ADMIN_SESSION_TOKEN`：后台登录 Cookie 中保存的会话 token。

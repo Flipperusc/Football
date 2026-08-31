@@ -33,6 +33,8 @@ corepack pnpm prisma:generate
 DATABASE_URL="postgresql://<DB_USER>:<DB_PASSWORD>@<DB_HOST>:5432/football_team?schema=public"
 DEEPSEEK_API_KEY="<DEEPSEEK_API_KEY_OR_EMPTY>"
 DEEPSEEK_MODEL="deepseek-v4-flash"
+DEEPSEEK_ATTEMPT_TIMEOUT_MS="45000"
+DEEPSEEK_MAX_TOKENS="4096"
 ADMIN_USERNAME="<ADMIN_USERNAME>"
 ADMIN_PASSWORD="<ADMIN_PASSWORD>"
 ADMIN_SESSION_TOKEN="<LONG_RANDOM_SESSION_TOKEN>"
@@ -96,11 +98,13 @@ Prisma schema 位于 `prisma/schema.prisma`，完整迁移历史位于 `prisma/m
 - Prompt 会包含球员名单、别名、错别字候选和阵容。
 - 返回值必须是 JSON。
 - Zod schema 位于 `lib/ai/schemas.ts`。
-- JSON 非法时最多重试 1 次。
+- DeepSeek 请求显式关闭思考模式，默认 `max_tokens=4096`。
+- 单次请求默认等待 45 秒；只对超时、429、5xx、空内容或非法 JSON/schema 最多重试 1 次。
 - 低置信度和无法确认的信息进入 `needsReview` 或 `uncertainItems`。
 - AI 只负责结构化解析，不负责最终榜单计算。
 
 如果本地没有 `DEEPSEEK_API_KEY`，系统会使用 `lib/ai/local-parser.ts` 的规则解析器，方便完成开发验收流程。正式部署时应配置 DeepSeek Key。
+一旦配置了 Key，DeepSeek 超时、鉴权、余额、限流或返回格式错误会以明确的中文错误和错误码返回，不会再静默切换规则解析。
 
 ## API
 
@@ -157,5 +161,7 @@ pnpm build
 
 - 生产环境必须配置 PostgreSQL `DATABASE_URL`。
 - 生产环境应配置 `DEEPSEEK_API_KEY`。
+- 建议设置 `DEEPSEEK_ATTEMPT_TIMEOUT_MS="45000"` 和 `DEEPSEEK_MAX_TOKENS="4096"`。
+- nginx 反向代理应设置 `proxy_connect_timeout 10s`、`proxy_send_timeout 120s`、`proxy_read_timeout 120s`，确保应用约 90 秒内的重试或中文错误先返回。
 - 数据库迁移通过 `corepack pnpm prisma migrate deploy` 执行。
 - 不要把 `.env` 提交到仓库。

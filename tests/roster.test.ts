@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseRosterWithAi } from "@/lib/ai/roster";
 import type { ParserPlayer } from "@/lib/ai/local-parser";
 
 const previousDeepSeekKey = process.env.DEEPSEEK_API_KEY;
+const previousDeepSeekMaxTokens = process.env.DEEPSEEK_MAX_TOKENS;
 
 const rosterNames = {
   RED: [
@@ -67,10 +68,17 @@ describe("roster parsing", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     if (previousDeepSeekKey) {
       process.env.DEEPSEEK_API_KEY = previousDeepSeekKey;
     } else {
       delete process.env.DEEPSEEK_API_KEY;
+    }
+    if (previousDeepSeekMaxTokens) {
+      process.env.DEEPSEEK_MAX_TOKENS = previousDeepSeekMaxTokens;
+    } else {
+      delete process.env.DEEPSEEK_MAX_TOKENS;
     }
   });
 
@@ -132,5 +140,42 @@ describe("roster parsing", () => {
       "PLAYER",
       "GOALKEEPER"
     ]);
+  });
+
+  it("uses non-thinking mode and the configured output limit for DeepSeek roster parsing", async () => {
+    process.env.DEEPSEEK_API_KEY = "test-key";
+    process.env.DEEPSEEK_MAX_TOKENS = "4096";
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: "stop",
+              message: {
+                content: JSON.stringify({
+                  assignments: [
+                    { teamColor: "RED", role: "PLAYER", rawName: rosterNames.RED[0] }
+                  ]
+                })
+              }
+            }
+          ]
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await parseRosterWithAi({
+      rawText: `红\n${rosterNames.RED[0]}`,
+      matchType: "INTERNAL",
+      players: buildPlayers()
+    });
+
+    expect(result.usedFallback).toBe(false);
+    const requestBody = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(requestBody.thinking).toEqual({ type: "disabled" });
+    expect(requestBody.max_tokens).toBe(4096);
   });
 });

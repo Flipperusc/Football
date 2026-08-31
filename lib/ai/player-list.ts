@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isDeepSeekConfigured, requestDeepSeekJson } from "./deepseek-client";
 
 const aiPlayerListSchema = z.object({
   players: z.array(z.object({ name: z.string() })).default([])
@@ -105,78 +106,27 @@ function buildPlayerListPrompt(input: PlayerListParseInput) {
   ].join("\n\n");
 }
 
-async function callDeepSeekPlayerList(input: PlayerListParseInput) {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) return null;
+export async function parsePlayerListWithAi(input: PlayerListParseInput) {
+  if (!isDeepSeekConfigured()) {
+    return {
+      parsed: localParsePlayerList(input),
+      modelName: "local-player-list-parser",
+      usedFallback: true
+    };
+  }
 
-  const model = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
-  const response = await fetch("https://api.deepseek.com/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: "Return valid JSON only. Do not return Markdown or explanation text."
-        },
-        {
-          role: "user",
-          content: buildPlayerListPrompt(input)
-        }
-      ]
-    })
+  const result = await requestDeepSeekJson({
+    entrypoint: "player-list-parse",
+    prompt: buildPlayerListPrompt(input),
+    parseContent: (content) => {
+      const aiRows = aiPlayerListSchema.parse(JSON.parse(extractJson(content))).players;
+      return finalizeNames(aiRows.map((row) => row.name));
+    }
   });
 
-  if (!response.ok) {
-    throw new Error(`DeepSeek player list parse failed: ${response.status} ${await response.text()}`);
-  }
-
-  const payload = (await response.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const content = payload.choices?.[0]?.message?.content;
-  if (!content) throw new Error("DeepSeek player list parse returned empty content");
-
-  const aiRows = aiPlayerListSchema.parse(JSON.parse(extractJson(content))).players;
-  return finalizeNames(aiRows.map((row) => row.name));
-}
-
-export async function parsePlayerListWithAi(input: PlayerListParseInput) {
-  if (process.env.DEEPSEEK_API_KEY) {
-    try {
-      const parsed = await callDeepSeekPlayerList(input);
-      if (parsed) {
-        return {
-          parsed,
-          modelName: process.env.DEEPSEEK_MODEL || "deepseek-v4-flash",
-          usedFallback: false
-        };
-      }
-    } catch {
-      try {
-        const retried = await callDeepSeekPlayerList(input);
-        if (retried) {
-          return {
-            parsed: retried,
-            modelName: process.env.DEEPSEEK_MODEL || "deepseek-v4-flash",
-            usedFallback: false
-          };
-        }
-      } catch {
-        // Fall back to deterministic parsing below.
-      }
-    }
-  }
-
   return {
-    parsed: localParsePlayerList(input),
-    modelName: "local-player-list-parser",
-    usedFallback: true
+    parsed: result.parsed,
+    modelName: result.modelName,
+    usedFallback: false
   };
 }

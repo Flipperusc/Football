@@ -4,6 +4,7 @@ import type { InternalParseResult, ParseResult } from "@/lib/ai/schemas";
 import type { ParserPlayer } from "@/lib/ai/local-parser";
 
 const previousDeepSeekKey = process.env.DEEPSEEK_API_KEY;
+const previousDeepSeekMaxTokens = process.env.DEEPSEEK_MAX_TOKENS;
 
 const players: ParserPlayer[] = [
   { id: "p1", name: "\u5b87\u54e5", aliases: [] },
@@ -22,33 +23,44 @@ function expectInternalParsed(parsed: ParseResult): InternalParseResult {
 }
 
 function mockDeepSeek(content: unknown) {
+  const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+    new Response(
+      JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(content) } }] }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    )
+  );
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => ({
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: JSON.stringify(content) } }]
-      })
-    }))
+    fetchMock
   );
+  return fetchMock;
 }
 
 describe("post-match AI parsing", () => {
   beforeEach(() => {
     process.env.DEEPSEEK_API_KEY = "test-key";
+    process.env.DEEPSEEK_MAX_TOKENS = "4096";
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     if (previousDeepSeekKey) {
       process.env.DEEPSEEK_API_KEY = previousDeepSeekKey;
     } else {
       delete process.env.DEEPSEEK_API_KEY;
     }
+    if (previousDeepSeekMaxTokens) {
+      process.env.DEEPSEEK_MAX_TOKENS = previousDeepSeekMaxTokens;
+    } else {
+      delete process.env.DEEPSEEK_MAX_TOKENS;
+    }
   });
 
   it("turns clean DeepSeek facts into the full confirmation schema", async () => {
-    mockDeepSeek({
+    const fetchMock = mockDeepSeek({
       matchType: "internal",
       games: [
         {
@@ -101,6 +113,9 @@ describe("post-match AI parsing", () => {
     expect(parsed.games[0].events[0].scorer.playerId).toBe("p1");
     expect(parsed.games[0].events[0].assist?.playerId).toBe("p2");
     expect(parsed.bonusPoints[0].player.playerId).toBe("p1");
+    const requestBody = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(requestBody.thinking).toEqual({ type: "disabled" });
+    expect(requestBody.max_tokens).toBe(4096);
   });
 
   it("salvages old database-shaped DeepSeek output with missing confidence fields", async () => {
@@ -144,6 +159,21 @@ describe("post-match AI parsing", () => {
     expect(parsed.games[0].scoreA).toBe(1);
     expect(parsed.games[0].events[0].scorer.playerId).toBe("p1");
     expect(parsed.games[0].events[0].assist?.playerId).toBe("p2");
+  });
+
+  it("does not switch to local rules when a configured DeepSeek key fails", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      parseMatchWithAi({
+        rawText: "第一节白蓝1:0",
+        matchType: "INTERNAL",
+        players,
+        teamAssignments
+      })
+    ).rejects.toMatchObject({ code: "AI_AUTH_FAILED" });
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("splits best defender awards without bonus points", async () => {

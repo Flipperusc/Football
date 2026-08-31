@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
+import { DeepSeekError } from "@/lib/ai/deepseek-client";
 import { PlayerIdentityConflictError } from "@/lib/server/player-identities";
 
 function prismaMessage(error: unknown) {
@@ -34,6 +35,16 @@ function prismaMessage(error: unknown) {
 }
 
 export function apiErrorResponse(error: unknown, fallback = "请求处理失败") {
+  if (error instanceof DeepSeekError) {
+    return NextResponse.json(
+      {
+        message: error.message,
+        code: error.code
+      },
+      { status: error.status }
+    );
+  }
+
   if (error instanceof PlayerIdentityConflictError) {
     return NextResponse.json(
       {

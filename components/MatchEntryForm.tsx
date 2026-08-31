@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { Alert, App, Button, Form, Input, Select, Space, Tag } from "antd";
 import { Plus, Send, Wand2, UsersRound } from "lucide-react";
 import type { MatchDay, Player, Season } from "@/lib/client-types";
-import { requestJson } from "@/lib/client-types";
+import { getRequestErrorMessage, requestJson } from "@/lib/client-types";
+import { useElapsedSeconds } from "@/lib/use-elapsed-seconds";
 
 type TeamColor = "RED" | "BLUE" | "WHITE" | "EXTERNAL";
 type InternalTeamColor = Exclude<TeamColor, "EXTERNAL">;
@@ -23,6 +24,8 @@ type FormValues = {
   rawText: string;
   externalPlayers?: string[];
 };
+
+type SubmitPhase = "idle" | "saving" | "parsing";
 
 type RosterParseResponse = {
   parsed: {
@@ -71,14 +74,17 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
   const [form] = Form.useForm<FormValues>();
   const [players, setPlayers] = useState<Player[]>([]);
   const [seasons, setSeasons] = useState<Season[]>([]);
-  const [submitting, setSubmitting] = useState(false);
+  const [submitPhase, setSubmitPhase] = useState<SubmitPhase>("idle");
   const [recognizing, setRecognizing] = useState(false);
   const [editingMatchDayId, setEditingMatchDayId] = useState<string>();
   const [editingConfirmedMatch, setEditingConfirmedMatch] = useState(false);
+  const [parseFailed, setParseFailed] = useState(false);
+  const [parseError, setParseError] = useState<string>();
   const [aliasPlayerId, setAliasPlayerId] = useState<string>();
   const [aliasText, setAliasText] = useState("");
   const [aliasSaving, setAliasSaving] = useState(false);
   const [recognizeWarning, setRecognizeWarning] = useState<string>();
+  const [recognizeError, setRecognizeError] = useState<string>();
   const [rosterText, setRosterText] = useState("");
   const [externalRosterText, setExternalRosterText] = useState("");
   const [teamPlayers, setTeamPlayers] = useState<Record<InternalTeamColor, string[]>>({
@@ -91,6 +97,9 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
     BLUE: undefined,
     WHITE: undefined
   });
+  const submitting = submitPhase !== "idle";
+  const parseElapsedSeconds = useElapsedSeconds(submitPhase === "parsing");
+  const recognizeElapsedSeconds = useElapsedSeconds(recognizing);
 
   useEffect(() => {
     async function load() {
@@ -117,6 +126,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
 
         if (matchRow.type !== type) throw new Error("比赛类型与当前录入页面不一致");
         setEditingConfirmedMatch(matchRow.parseStatus === "CONFIRMED");
+        setParseFailed(matchRow.parseStatus === "FAILED");
 
         setEditingMatchDayId(matchRow.id);
         form.setFieldsValue({
@@ -236,6 +246,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
 
     setRecognizing(true);
     setRecognizeWarning(undefined);
+    setRecognizeError(undefined);
     try {
       const result = await parseRoster(rosterText, "INTERNAL");
       const nextTeamPlayers: Record<InternalTeamColor, string[]> = {
@@ -276,7 +287,9 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
       }
       message.success(`${result.usedFallback ? "本地规则" : "DeepSeek"} 已识别 ${count} 名球员`);
     } catch (error) {
-      message.error(error instanceof Error ? error.message : "识别阵容失败");
+      const errorMessage = getRequestErrorMessage(error, "识别阵容失败");
+      setRecognizeError(errorMessage);
+      message.error(errorMessage);
     } finally {
       setRecognizing(false);
     }
@@ -290,6 +303,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
 
     setRecognizing(true);
     setRecognizeWarning(undefined);
+    setRecognizeError(undefined);
     try {
       const result = await parseRoster(externalRosterText, "EXTERNAL");
       const ids = result.parsed.assignments
@@ -303,7 +317,9 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
       }
       message.success(`${result.usedFallback ? "本地规则" : "DeepSeek"} 已识别 ${ids.length} 名出勤球员`);
     } catch (error) {
-      message.error(error instanceof Error ? error.message : "识别出勤名单失败");
+      const errorMessage = getRequestErrorMessage(error, "识别出勤名单失败");
+      setRecognizeError(errorMessage);
+      message.error(errorMessage);
     } finally {
       setRecognizing(false);
     }
@@ -315,7 +331,11 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
       message.error("请先填写红队、蓝队、白队球员，否则无法给球员分配第一名/第二名/第三名积分");
       return;
     }
-    setSubmitting(true);
+    const wasEditing = Boolean(editingMatchDayId);
+    let savedMatchDayId = editingMatchDayId;
+    let parseStarted = false;
+    setSubmitPhase("saving");
+    setParseError(undefined);
     try {
       const matchDay = editingMatchDayId
         ? await requestJson<{ id: string }>(`/api/matchdays/${editingMatchDayId}`, {
@@ -339,6 +359,17 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
             })
           });
 
+      savedMatchDayId = matchDay.id;
+      setEditingMatchDayId(matchDay.id);
+      setEditingConfirmedMatch(false);
+      setParseFailed(false);
+      if (!editingMatchDayId) {
+        const entryPath = type === "INTERNAL" ? "/matchdays/internal" : "/matchdays/external";
+        router.replace(`${entryPath}?edit=${matchDay.id}`);
+      }
+
+      parseStarted = true;
+      setSubmitPhase("parsing");
       await requestJson(`/api/matchdays/${matchDay.id}/parse`, {
         method: "POST",
         body: JSON.stringify({
@@ -348,12 +379,20 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
         })
       });
 
-      message.success(editingMatchDayId ? "重新解析完成，请确认结果" : "解析完成，请确认结果");
+      setParseFailed(false);
+      setParseError(undefined);
+      message.success(wasEditing ? "重新解析完成，请确认结果" : "解析完成，请确认结果");
       router.push(`/matchdays/${matchDay.id}/confirm`);
     } catch (error) {
-      message.error(error instanceof Error ? error.message : "提交失败");
+      const errorMessage = getRequestErrorMessage(error, parseStarted ? "解析比赛失败" : "保存比赛失败");
+      if (parseStarted && savedMatchDayId) {
+        setEditingMatchDayId(savedMatchDayId);
+        setParseFailed(true);
+        setParseError(errorMessage);
+      }
+      message.error(errorMessage);
     } finally {
-      setSubmitting(false);
+      setSubmitPhase("idle");
     }
   }
 
@@ -402,6 +441,32 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
         </Form.Item>
       </div>
 
+      {recognizing ? (
+        <Alert
+          type="info"
+          showIcon
+          message={`DeepSeek 正在识别名单，已等待 ${recognizeElapsedSeconds} 秒，最长约 90 秒，请勿重复点击`}
+          description={
+            recognizeElapsedSeconds >= 45
+              ? "首次尝试时间较长，系统可能正在重试。请继续等待当前请求返回。"
+              : "识别完成后会自动填入名单。"
+          }
+          style={{ marginBottom: 12 }}
+        />
+      ) : null}
+
+      {recognizeError ? (
+        <Alert
+          type="error"
+          showIcon
+          closable
+          onClose={() => setRecognizeError(undefined)}
+          message="名单识别未完成"
+          description={recognizeError}
+          style={{ marginBottom: 12 }}
+        />
+      ) : null}
+
       {recognizeWarning ? (
         <Alert type="warning" showIcon message={recognizeWarning} style={{ marginBottom: 12 }} />
       ) : null}
@@ -435,6 +500,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
               icon={<UsersRound size={16} />}
               onClick={recognizeInternalRoster}
               loading={recognizing}
+              disabled={submitting || recognizing}
             >
               DeepSeek 识别并填入阵容
             </Button>
@@ -495,6 +561,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
               icon={<UsersRound size={16} />}
               onClick={recognizeExternalRoster}
               loading={recognizing}
+              disabled={submitting || recognizing}
             >
               DeepSeek 识别出勤名单
             </Button>
@@ -516,16 +583,67 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
         <Input.TextArea rows={9} placeholder="粘贴赛后文本" />
       </Form.Item>
 
-      <Button type="primary" htmlType="submit" icon={<Wand2 size={16} />} loading={submitting}>
-        {editingMatchDayId ? "保存修改并重新解析" : "保存并解析"}
+      {submitPhase === "saving" ? (
+        <Alert
+          type="info"
+          showIcon
+          message="正在保存比赛信息"
+          description="保存完成后会自动开始 DeepSeek 解析。"
+          style={{ marginBottom: 12 }}
+        />
+      ) : null}
+
+      {submitPhase === "parsing" ? (
+        <Alert
+          type="info"
+          showIcon
+          message={`比赛已保存，DeepSeek 正在解析，已等待 ${parseElapsedSeconds} 秒，最长约 90 秒，请勿重复提交`}
+          description={
+            parseElapsedSeconds >= 45
+              ? "首次尝试时间较长，系统可能正在重试。请继续等待当前请求返回。"
+              : "解析完成后会自动进入确认页面。"
+          }
+          style={{ marginBottom: 12 }}
+        />
+      ) : null}
+
+      {parseError ? (
+        <Alert
+          type="error"
+          showIcon
+          closable
+          onClose={() => setParseError(undefined)}
+          message="解析未完成，比赛信息已保存"
+          description={`${parseError} 当前页面已经绑定到同一场比赛，再次点击“重新解析”不会创建重复比赛。`}
+          style={{ marginBottom: 12 }}
+        />
+      ) : null}
+
+      <Button
+        type="primary"
+        htmlType="submit"
+        icon={<Wand2 size={16} />}
+        loading={submitting}
+        disabled={submitting || recognizing}
+      >
+        {submitPhase === "saving"
+          ? "正在保存比赛信息"
+          : submitPhase === "parsing"
+            ? `DeepSeek 解析中（${parseElapsedSeconds} 秒）`
+            : parseFailed
+              ? "重新解析"
+              : editingMatchDayId
+                ? "保存修改并重新解析"
+                : "保存并解析"}
       </Button>
       <Button
         style={{ marginLeft: 8 }}
         icon={<Send size={16} />}
         onClick={() => form.submit()}
         loading={submitting}
+        disabled={submitting || recognizing}
       >
-        进入确认
+        {parseFailed ? "重新解析并进入确认" : "进入确认"}
       </Button>
     </Form>
   );

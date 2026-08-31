@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parsePlayerListWithAi } from "@/lib/ai/player-list";
 
 const previousDeepSeekKey = process.env.DEEPSEEK_API_KEY;
+const previousDeepSeekMaxTokens = process.env.DEEPSEEK_MAX_TOKENS;
 
 const sampleNames = [
   "宇哥",
@@ -61,10 +62,17 @@ describe("player list parsing", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     if (previousDeepSeekKey) {
       process.env.DEEPSEEK_API_KEY = previousDeepSeekKey;
     } else {
       delete process.env.DEEPSEEK_API_KEY;
+    }
+    if (previousDeepSeekMaxTokens) {
+      process.env.DEEPSEEK_MAX_TOKENS = previousDeepSeekMaxTokens;
+    } else {
+      delete process.env.DEEPSEEK_MAX_TOKENS;
     }
   });
 
@@ -81,5 +89,32 @@ describe("player list parsing", () => {
     });
 
     expect(result.parsed.players.map((player) => player.name)).toEqual(["宇哥", "AD钙", "BOBO"]);
+  });
+
+  it("uses non-thinking mode and the configured output limit for DeepSeek player-list parsing", async () => {
+    process.env.DEEPSEEK_API_KEY = "test-key";
+    process.env.DEEPSEEK_MAX_TOKENS = "4096";
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: "stop",
+              message: { content: JSON.stringify({ players: [{ name: "宇哥" }] }) }
+            }
+          ]
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await parsePlayerListWithAi({ rawText: "宇哥" });
+
+    expect(result.usedFallback).toBe(false);
+    const requestBody = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(requestBody.thinking).toEqual({ type: "disabled" });
+    expect(requestBody.max_tokens).toBe(4096);
   });
 });

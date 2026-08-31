@@ -5,7 +5,8 @@ import { Alert, App, Button, Input, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { FileSearch, Trash2, Upload } from "lucide-react";
 import type { Player } from "@/lib/client-types";
-import { requestJson } from "@/lib/client-types";
+import { getRequestErrorMessage, requestJson } from "@/lib/client-types";
+import { useElapsedSeconds } from "@/lib/use-elapsed-seconds";
 
 type ParsedPlayerRow = {
   key: string;
@@ -53,6 +54,8 @@ export function PlayerBulkImport({ onImported }: { onImported: () => Promise<voi
   const [rows, setRows] = useState<ParsedPlayerRow[]>([]);
   const [recognizing, setRecognizing] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [recognizeError, setRecognizeError] = useState<string>();
+  const recognizeElapsedSeconds = useElapsedSeconds(recognizing);
 
   const importableRows = rows.filter((row) => !row.exists && row.name.trim());
 
@@ -63,6 +66,7 @@ export function PlayerBulkImport({ onImported }: { onImported: () => Promise<voi
     }
 
     setRecognizing(true);
+    setRecognizeError(undefined);
     try {
       const result = await requestJson<PlayerListParseResponse>("/api/players/parse", {
         method: "POST",
@@ -82,7 +86,9 @@ export function PlayerBulkImport({ onImported }: { onImported: () => Promise<voi
         `${result.usedFallback ? "本地规则" : "DeepSeek"} 已识别 ${nextRows.length} 名球员，${newCount} 名可导入`
       );
     } catch (error) {
-      message.error(error instanceof Error ? error.message : "识别球员名单失败");
+      const errorMessage = getRequestErrorMessage(error, "识别球员名单失败");
+      setRecognizeError(errorMessage);
+      message.error(errorMessage);
     } finally {
       setRecognizing(false);
     }
@@ -183,15 +189,44 @@ export function PlayerBulkImport({ onImported }: { onImported: () => Promise<voi
         placeholder={`每行一个球员，例如：\n${samplePlayers}`}
       />
 
+      {recognizing ? (
+        <Alert
+          type="info"
+          showIcon
+          message={`DeepSeek 正在识别球员名单，已等待 ${recognizeElapsedSeconds} 秒，最长约 90 秒，请勿重复点击`}
+          description={
+            recognizeElapsedSeconds >= 45
+              ? "首次尝试时间较长，系统可能正在重试。请继续等待当前请求返回。"
+              : "识别完成后会显示可导入名单。"
+          }
+        />
+      ) : null}
+
+      {recognizeError ? (
+        <Alert
+          type="error"
+          showIcon
+          closable
+          onClose={() => setRecognizeError(undefined)}
+          message="球员名单识别未完成"
+          description={recognizeError}
+        />
+      ) : null}
+
       <Space wrap>
-        <Button icon={<FileSearch size={16} />} loading={recognizing} onClick={recognizePlayers}>
+        <Button
+          icon={<FileSearch size={16} />}
+          loading={recognizing}
+          disabled={recognizing || importing}
+          onClick={recognizePlayers}
+        >
           一键识别球员名单
         </Button>
         <Button
           type="primary"
           icon={<Upload size={16} />}
           loading={importing}
-          disabled={!importableRows.length}
+          disabled={!importableRows.length || recognizing}
           onClick={importPlayers}
         >
           导入新球员

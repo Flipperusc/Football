@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { parseResultSchema, type MatchedPlayer, type ParseResult, type ParsedGoalEvent } from "./schemas";
 import { localParseMatch, type ParserAssignment, type ParserPlayer } from "./local-parser";
+import { isDeepSeekConfigured, requestDeepSeekJson } from "./deepseek-client";
 
 export type AiParseInput = {
   rawText: string;
@@ -638,61 +639,18 @@ function localFallback(input: AiParseInput): AiParseOutput {
   }
 }
 
-async function callDeepSeek(input: AiParseInput) {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) return null;
+export async function parseMatchWithAi(input: AiParseInput): Promise<AiParseOutput> {
+  if (!isDeepSeekConfigured()) return localFallback(input);
 
-  const model = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
-  const response = await fetch("https://api.deepseek.com/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: "Return valid JSON only. Do not return Markdown or explanation text."
-        },
-        {
-          role: "user",
-          content: buildPrompt(input)
-        }
-      ]
-    })
+  const result = await requestDeepSeekJson({
+    entrypoint: "match-parse",
+    prompt: buildPrompt(input),
+    parseContent: (content) => finalizeAiJson(JSON.parse(extractJson(content)), input)
   });
 
-  if (!response.ok) {
-    throw new Error(`DeepSeek API failed: ${response.status} ${await response.text()}`);
-  }
-
-  const payload = (await response.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const content = payload.choices?.[0]?.message?.content;
-  if (!content) throw new Error("DeepSeek API returned empty content");
-
   return {
-    parsed: finalizeAiJson(JSON.parse(extractJson(content)), input),
-    modelName: model
+    parsed: result.parsed,
+    modelName: result.modelName,
+    usedFallback: false
   };
-}
-
-export async function parseMatchWithAi(input: AiParseInput): Promise<AiParseOutput> {
-  if (process.env.DEEPSEEK_API_KEY) {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const parsed = await callDeepSeek(input);
-        if (parsed) return { ...parsed, usedFallback: false };
-      } catch {
-        // Retry once, then use a safe local fallback below.
-      }
-    }
-  }
-
-  return localFallback(input);
 }

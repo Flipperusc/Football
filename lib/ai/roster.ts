@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ParserPlayer } from "./local-parser";
+import { isDeepSeekConfigured, requestDeepSeekJson } from "./deepseek-client";
 
 const rosterTeamColorSchema = z.enum(["RED", "BLUE", "WHITE", "EXTERNAL"]);
 const rosterRoleSchema = z.enum(["PLAYER", "GOALKEEPER"]);
@@ -317,78 +318,27 @@ function buildRosterPrompt(input: RosterParseInput) {
   ].join("\n\n");
 }
 
-async function callDeepSeekRoster(input: RosterParseInput) {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) return null;
+export async function parseRosterWithAi(input: RosterParseInput) {
+  if (!isDeepSeekConfigured()) {
+    return {
+      parsed: rosterParseResultSchema.parse(localParseRoster(input)),
+      modelName: "local-roster-parser",
+      usedFallback: true
+    };
+  }
 
-  const model = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
-  const response = await fetch("https://api.deepseek.com/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: "Return valid JSON only. Do not return Markdown or explanation text."
-        },
-        {
-          role: "user",
-          content: buildRosterPrompt(input)
-        }
-      ]
-    })
+  const result = await requestDeepSeekJson({
+    entrypoint: "roster-parse",
+    prompt: buildRosterPrompt(input),
+    parseContent: (content) => {
+      const aiRows = aiRosterResultSchema.parse(JSON.parse(extractJson(content))).assignments;
+      return rosterParseResultSchema.parse(finalizeRows(aiRows, input));
+    }
   });
 
-  if (!response.ok) {
-    throw new Error(`DeepSeek roster parse failed: ${response.status} ${await response.text()}`);
-  }
-
-  const payload = (await response.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const content = payload.choices?.[0]?.message?.content;
-  if (!content) throw new Error("DeepSeek roster parse returned empty content");
-
-  const aiRows = aiRosterResultSchema.parse(JSON.parse(extractJson(content))).assignments;
-  return rosterParseResultSchema.parse(finalizeRows(aiRows, input));
-}
-
-export async function parseRosterWithAi(input: RosterParseInput) {
-  if (process.env.DEEPSEEK_API_KEY) {
-    try {
-      const parsed = await callDeepSeekRoster(input);
-      if (parsed) {
-        return {
-          parsed,
-          modelName: process.env.DEEPSEEK_MODEL || "deepseek-v4-flash",
-          usedFallback: false
-        };
-      }
-    } catch {
-      try {
-        const retried = await callDeepSeekRoster(input);
-        if (retried) {
-          return {
-            parsed: retried,
-            modelName: process.env.DEEPSEEK_MODEL || "deepseek-v4-flash",
-            usedFallback: false
-          };
-        }
-      } catch {
-        // Fall back to deterministic parsing below.
-      }
-    }
-  }
-
   return {
-    parsed: rosterParseResultSchema.parse(localParseRoster(input)),
-    modelName: "local-roster-parser",
-    usedFallback: true
+    parsed: result.parsed,
+    modelName: result.modelName,
+    usedFallback: false
   };
 }

@@ -96,8 +96,8 @@ export function AppShell({
             className="ai-unavailable-alert"
             type="warning"
             showIcon
-            message="AI 服务当前不可用"
-            description="系统已自动切换为本地规则解析，仍可继续录入；识别结果可能不完整，请重点人工确认。"
+            message="服务器未配置 DeepSeek API Key"
+            description="当前未配置 Key，系统使用本地规则解析，识别结果可能不完整，请重点人工确认。生产环境配置 Key 后，DeepSeek 运行失败会直接显示明确错误，不会静默切换规则解析。"
           />
         ) : null}
         {children}
