@@ -139,12 +139,15 @@ function defaultHttpErrorMessage(status: number, url: string) {
 }
 
 export async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
+  if (!isFormData && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
   const response = await fetch(url, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {})
-    }
+    headers
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");

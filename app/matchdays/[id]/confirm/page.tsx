@@ -135,6 +135,47 @@ function cloneParsed(parsed: ParsedMatch) {
   return JSON.parse(JSON.stringify(parsed)) as ParsedMatch;
 }
 
+function assignedTeamForPlayer(matchDay: MatchDay, playerId: string | null | undefined) {
+  if (!playerId) return undefined;
+  const teamColor = matchDay.assignments?.find((assignment) => assignment.playerId === playerId)?.teamColor;
+  if (teamColor === "RED") return "red";
+  if (teamColor === "BLUE") return "blue";
+  if (teamColor === "WHITE") return "white";
+  return undefined;
+}
+
+function applyAuthoritativeTeams(parsed: ParsedMatch, matchDay: MatchDay) {
+  const next = cloneParsed(parsed);
+  if (next.matchType !== "internal") return next;
+
+  for (const game of next.games ?? []) {
+    for (const event of game.events) {
+      const scorerTeam = assignedTeamForPlayer(matchDay, event.scorer.playerId);
+      const assistTeam = event.assist
+        ? assignedTeamForPlayer(matchDay, event.assist.playerId)
+        : scorerTeam;
+      event.team = scorerTeam;
+      event.needsReview = event.needsReview
+        || (scorerTeam !== game.teamA && scorerTeam !== game.teamB)
+        || Boolean(event.assist && assistTeam !== scorerTeam);
+    }
+
+    const goalsA = game.events
+      .filter((event) => event.team === game.teamA)
+      .reduce((sum, event) => sum + event.count, 0);
+    const goalsB = game.events
+      .filter((event) => event.team === game.teamB)
+      .reduce((sum, event) => sum + event.count, 0);
+    const currentScoresFit = goalsA <= game.scoreA && goalsB <= game.scoreB;
+    const swappedScoresFit = goalsA <= game.scoreB && goalsB <= game.scoreA;
+    if (!currentScoresFit && swappedScoresFit) {
+      [game.scoreA, game.scoreB] = [game.scoreB, game.scoreA];
+    }
+  }
+
+  return next;
+}
+
 function playerRefFromId(playerId: string | null | undefined, players: Player[], rawName?: string): PlayerRef {
   if (!playerId) {
     return {
@@ -207,7 +248,8 @@ export default function ConfirmMatchDayPage() {
       ]);
       setMatchDay(matchRow);
       setPlayers(playerRows);
-      setParsed((matchRow.parseResults?.[0]?.parsedJson ?? null) as ParsedMatch | null);
+      const parsedResult = (matchRow.parseResults?.[0]?.parsedJson ?? null) as ParsedMatch | null;
+      setParsed(parsedResult ? applyAuthoritativeTeams(parsedResult, matchRow) : null);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "加载解析结果失败");
     } finally {
@@ -318,7 +360,7 @@ export default function ConfirmMatchDayPage() {
       if (next.matchType === "internal") {
         const game = next.games?.[0];
         if (!game) return;
-        game.events.push(emptyEvent(game.teamA));
+        game.events.push(emptyEvent());
       } else {
         next.events = [...(next.events ?? []), emptyEvent("external")];
       }
@@ -406,6 +448,40 @@ export default function ConfirmMatchDayPage() {
     const events = parsed.matchType === "internal" ? parsed.games?.flatMap((game) => game.events) ?? [] : parsed.events ?? [];
     if (events.some((event) => !event.scorer.playerId)) {
       return "仍有进球球员没有匹配，请先在表格里选择球员";
+    }
+    if (parsed.matchType === "internal" && matchDay) {
+      for (const game of parsed.games ?? []) {
+        let goalsA = 0;
+        let goalsB = 0;
+        for (const event of game.events) {
+          const scorerTeam = assignedTeamForPlayer(matchDay, event.scorer.playerId);
+          const scorerName = event.scorer.matchedName || event.scorer.rawName || "未知球员";
+          if (!scorerTeam) {
+            return `进球球员“${scorerName}”尚未分配到红、蓝、白队，请返回录入页修正分队`;
+          }
+          if (scorerTeam !== game.teamA && scorerTeam !== game.teamB) {
+            return `进球球员“${scorerName}”属于${teamLabels[scorerTeam]}，但第 ${game.sectionNo} 节没有该队`;
+          }
+          if (event.team !== scorerTeam) {
+            return `进球球员“${scorerName}”的进球队伍必须为${teamLabels[scorerTeam]}`;
+          }
+          if (event.assist?.playerId) {
+            const assistTeam = assignedTeamForPlayer(matchDay, event.assist.playerId);
+            const assistName = event.assist.matchedName || event.assist.rawName || "未知球员";
+            if (!assistTeam) {
+              return `助攻球员“${assistName}”尚未分配到红、蓝、白队，请返回录入页修正分队`;
+            }
+            if (assistTeam !== scorerTeam) {
+              return `助攻球员“${assistName}”与进球球员“${scorerName}”不在同一队`;
+            }
+          }
+          if (scorerTeam === game.teamA) goalsA += event.count;
+          if (scorerTeam === game.teamB) goalsB += event.count;
+        }
+        if (goalsA > game.scoreA || goalsB > game.scoreB) {
+          return `第 ${game.sectionNo} 节比分与按分队归属的进球不一致，请检查比分`;
+        }
+      }
     }
     if ((parsed.awards ?? []).some((award) => award.players.length === 0 || award.players.some((player) => !player.playerId))) {
       return "仍有奖项球员没有匹配，请先在奖项表里选择球员";
@@ -540,14 +616,16 @@ export default function ConfirmMatchDayPage() {
     {
       title: "进球队伍",
       width: 120,
-      render: (_, row) => (
-        <Select
-          style={{ width: 100 }}
-          value={row.team}
-          options={parsed?.matchType === "internal" ? teamOptions.filter((item) => item.value !== "external") : teamOptions}
-          onChange={(team) => updateEvent(row, { team })}
-        />
-      )
+      render: (_, row) => {
+        const team = parsed?.matchType === "internal" && matchDay
+          ? assignedTeamForPlayer(matchDay, row.scorer.playerId)
+          : "external";
+        return (
+          <Tag color={team === "red" ? "red" : team === "blue" ? "blue" : undefined}>
+            {team ? teamLabels[team] : "未分队"}
+          </Tag>
+        );
+      }
     },
     {
       title: "进球球员",
@@ -560,12 +638,14 @@ export default function ConfirmMatchDayPage() {
           value={row.scorer.playerId ?? undefined}
           options={playerOptions}
           status={!row.scorer.playerId ? "error" : undefined}
-          onChange={(playerId) =>
+          onChange={(playerId) => {
+            const team = matchDay ? assignedTeamForPlayer(matchDay, playerId) : undefined;
             updateEvent(row, {
               scorer: playerRefFromId(playerId, players, row.scorer.rawName),
-              needsReview: false
-            })
-          }
+              team: parsed?.matchType === "internal" ? team : "external",
+              needsReview: parsed?.matchType === "internal" ? !team : false
+            });
+          }}
         />
       )
     },
@@ -787,6 +867,15 @@ export default function ConfirmMatchDayPage() {
             新增进球
           </Button>
         </div>
+        {parsed?.matchType === "internal" ? (
+          <Alert
+            type="info"
+            showIcon
+            message="进球队伍由分队自动确定"
+            description="赛后文本只识别进球球员、助攻和比分，不会修改球员分队；选择进球球员后，系统会自动使用该球员在本场的分队。"
+            style={{ marginBottom: 16 }}
+          />
+        ) : null}
         <Table rowKey="key" loading={loading} columns={eventColumns} dataSource={eventRows} pagination={false} scroll={{ x: 1100 }} />
       </div>
 

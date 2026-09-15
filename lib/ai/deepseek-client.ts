@@ -54,11 +54,21 @@ type DeepSeekPayload = {
   usage?: DeepSeekUsage;
 };
 
-export type DeepSeekEntrypoint = "match-parse" | "roster-parse" | "player-list-parse";
+export type DeepSeekEntrypoint =
+  | "match-parse"
+  | "roster-parse"
+  | "roster-image-ocr"
+  | "player-list-parse";
+
+export type DeepSeekUserContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
 
 type RequestDeepSeekJsonOptions<T> = {
   entrypoint: DeepSeekEntrypoint;
   prompt: string;
+  model?: string;
+  userContent?: DeepSeekUserContentPart[];
   parseContent: (content: string) => T;
 };
 
@@ -193,6 +203,7 @@ async function runAttempt<T>({
   attempt,
   entrypoint,
   prompt,
+  userContent,
   parseContent
 }: RequestDeepSeekJsonOptions<T> & {
   apiKey: string;
@@ -233,7 +244,7 @@ async function runAttempt<T>({
             },
             {
               role: "user",
-              content: prompt
+              content: userContent ?? prompt
             }
           ]
         })
@@ -303,7 +314,7 @@ export async function requestDeepSeekJson<T>(
     });
   }
 
-  const model = getDeepSeekModel();
+  const model = options.model?.trim() || getDeepSeekModel();
   const timeoutMs = positiveIntegerFromEnv(
     "DEEPSEEK_ATTEMPT_TIMEOUT_MS",
     DEFAULT_ATTEMPT_TIMEOUT_MS

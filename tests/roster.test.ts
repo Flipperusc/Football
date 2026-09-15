@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parseRosterWithAi } from "@/lib/ai/roster";
+import { parseRosterImageWithAi, parseRosterWithAi } from "@/lib/ai/roster";
 import type { ParserPlayer } from "@/lib/ai/local-parser";
 
 const previousDeepSeekKey = process.env.DEEPSEEK_API_KEY;
@@ -142,6 +142,27 @@ describe("roster parsing", () => {
     ]);
   });
 
+  it("keeps a matched player in only one internal team and flags conflicting OCR", async () => {
+    const repeatedName = rosterNames.RED[0];
+    const result = await parseRosterWithAi({
+      rawText: `红\n${repeatedName}\n蓝\n${repeatedName}`,
+      matchType: "INTERNAL",
+      players: buildPlayers()
+    });
+
+    expect(result.parsed.assignments).toHaveLength(1);
+    expect(result.parsed.assignments[0]).toMatchObject({
+      teamColor: "RED",
+      matchedName: repeatedName
+    });
+    expect(result.parsed.uncertainItems).toEqual([
+      expect.objectContaining({
+        rawText: repeatedName,
+        reason: "同一球员被识别到多个分队，已保留首次分队，请人工检查。"
+      })
+    ]);
+  });
+
   it("uses non-thinking mode and the configured output limit for DeepSeek roster parsing", async () => {
     process.env.DEEPSEEK_API_KEY = "test-key";
     process.env.DEEPSEEK_MAX_TOKENS = "4096";
@@ -177,5 +198,60 @@ describe("roster parsing", () => {
     const requestBody = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
     expect(requestBody.thinking).toEqual({ type: "disabled" });
     expect(requestBody.max_tokens).toBe(4096);
+  });
+
+  it("uses the current DeepSeek Flash vision model and reuses roster matching", async () => {
+    process.env.DEEPSEEK_API_KEY = "test-key";
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const imageDataUrl = "data:image/png;base64,iVBORw0KGgo=";
+    const ocrText = `红\n${rosterNames.RED[0]}\n${rosterNames.RED[1]}`;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: "stop",
+              message: {
+                content: JSON.stringify({
+                  rawText: ocrText,
+                  assignments: [
+                    { teamColor: "RED", role: "PLAYER", rawName: rosterNames.RED[0] },
+                    { teamColor: "RED", role: "PLAYER", rawName: rosterNames.RED[1] }
+                  ]
+                })
+              }
+            }
+          ]
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await parseRosterImageWithAi({
+      imageDataUrl,
+      players: buildPlayers()
+    });
+
+    expect(result).toMatchObject({
+      ocrText,
+      modelName: "deepseek-flash",
+      usedFallback: false
+    });
+    expect(result.parsed.assignments.map((row) => row.matchedName)).toEqual([
+      rosterNames.RED[0],
+      rosterNames.RED[1]
+    ]);
+    expect(result.parsed.assignments.map((row) => row.role)).toEqual([
+      "PLAYER",
+      "GOALKEEPER"
+    ]);
+
+    const requestBody = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(requestBody.model).toBe("deepseek-flash");
+    expect(requestBody.messages[1].content).toEqual([
+      expect.objectContaining({ type: "text" }),
+      { type: "image_url", image_url: { url: imageDataUrl } }
+    ]);
   });
 });

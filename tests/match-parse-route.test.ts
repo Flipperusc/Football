@@ -27,14 +27,17 @@ vi.mock("@/lib/ai/deepseek", () => ({ parseMatchWithAi: mocks.parseMatchWithAi }
 
 import { POST } from "@/app/api/matchdays/[id]/parse/route";
 
-function parseRequest(matchType: "INTERNAL" | "EXTERNAL" = "INTERNAL") {
+function parseRequest(
+  matchType: "INTERNAL" | "EXTERNAL" = "INTERNAL",
+  teamAssignments: { playerId: string; teamColor: "RED" | "BLUE" | "WHITE" | "EXTERNAL" }[] = []
+) {
   return new Request("http://localhost/api/matchdays/m1/parse", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       rawText: "第一节白蓝1:0",
       matchType,
-      teamAssignments: []
+      teamAssignments
     })
   });
 }
@@ -56,7 +59,11 @@ function successfulParse() {
 describe("match parse route consistency", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.db.matchDay.findUnique.mockResolvedValue({ id: "m1", type: "INTERNAL" });
+    mocks.db.matchDay.findUnique.mockResolvedValue({
+      id: "m1",
+      type: "INTERNAL",
+      assignments: [{ playerId: "p1", teamColor: "WHITE", role: "PLAYER", isCaptain: false }]
+    });
     mocks.db.matchDay.updateMany.mockResolvedValue({ count: 1 });
     mocks.db.player.findMany.mockResolvedValue([]);
     mocks.db.matchParseResult.create.mockResolvedValue({ id: "parse-1" });
@@ -88,6 +95,22 @@ describe("match parse route consistency", () => {
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({ code: "MATCH_TYPE_MISMATCH" });
     expect(mocks.parseMatchWithAi).not.toHaveBeenCalled();
+  });
+
+  it("uses persisted roster assignments instead of request-provided teams", async () => {
+    const response = await POST(
+      parseRequest("INTERNAL", [{ playerId: "p1", teamColor: "RED" }]),
+      { params: { id: "m1" } }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.parseMatchWithAi).toHaveBeenCalledWith(
+      expect.objectContaining({
+        teamAssignments: [
+          { playerId: "p1", teamColor: "WHITE", role: "PLAYER", isCaptain: false }
+        ]
+      })
+    );
   });
 
   it("does not create an orphan result when the match is deleted during a successful parse", async () => {

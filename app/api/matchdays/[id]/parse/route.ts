@@ -84,7 +84,13 @@ export async function POST(request: Request, { params }: { params: { id: string 
   try {
     matchDay = await prisma.matchDay.findUnique({
       where: { id: params.id },
-      select: { id: true, type: true }
+      select: {
+        id: true,
+        type: true,
+        assignments: {
+          select: { playerId: true, teamColor: true, role: true, isCaptain: true }
+        }
+      }
     });
   } catch (error) {
     return apiErrorResponse(error, "读取比赛信息失败");
@@ -119,7 +125,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
           aliasType: alias.aliasType
         }))
       })),
-      teamAssignments: body.teamAssignments
+      teamAssignments: matchDay.assignments
     });
   } catch (error) {
     let parentStillExists = true;

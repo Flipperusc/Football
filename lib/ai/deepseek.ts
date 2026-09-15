@@ -30,8 +30,8 @@ type CleanGame = {
   sectionNo: number;
   teamA: Exclude<AiTeamColor, "external">;
   teamB: Exclude<AiTeamColor, "external">;
-  scoreA: number;
-  scoreB: number;
+  scoreA?: number;
+  scoreB?: number;
   rawText: string;
   goals: CleanGoal[];
 };
@@ -82,10 +82,11 @@ function buildPrompt(input: AiParseInput) {
     "You are a post-match football text structuring engine. Return valid JSON only.",
     "Do not return playerId, confidence, candidates, or database-shaped objects. The backend code will match players and calculate confidence.",
     "For an internal match, return this clean shape:",
-    "{\"matchType\":\"internal\",\"games\":[{\"sectionNo\":1,\"teamA\":\"white\",\"teamB\":\"blue\",\"scoreA\":0,\"scoreB\":0,\"rawText\":\"source line\",\"goals\":[{\"team\":\"white\",\"scorerName\":\"name\",\"assistName\":\"name or null\",\"count\":1,\"rawText\":\"source fragment\"}]}],\"bonusPoints\":[{\"playerName\":\"name\",\"points\":1,\"reason\":\"reason\",\"rawText\":\"source fragment\"}],\"awards\":[{\"name\":\"award name\",\"playerNames\":[\"name\"],\"points\":0,\"rawText\":\"source fragment\"}],\"uncertainItems\":[]}",
+    "{\"matchType\":\"internal\",\"games\":[{\"sectionNo\":1,\"teamA\":\"white\",\"teamB\":\"blue\",\"scoreA\":0,\"scoreB\":0,\"rawText\":\"source line\",\"goals\":[{\"scorerName\":\"name\",\"assistName\":\"name or null\",\"count\":1,\"rawText\":\"source fragment\"}]}],\"bonusPoints\":[{\"playerName\":\"name\",\"points\":1,\"reason\":\"reason\",\"rawText\":\"source fragment\"}],\"awards\":[{\"name\":\"award name\",\"playerNames\":[\"name\"],\"points\":0,\"rawText\":\"source fragment\"}],\"uncertainItems\":[]}",
     "For an external match, return this clean shape:",
     "{\"matchType\":\"external\",\"events\":[{\"team\":\"external\",\"scorerName\":\"name\",\"assistName\":\"name or null\",\"count\":1,\"rawText\":\"source fragment\"}],\"bonusPoints\":[],\"awards\":[],\"uncertainItems\":[]}",
     "Use sectionNo 1-6 for internal games. Internal team colors must be red, blue, or white. External team color must be external.",
+    "For internal matches, team assignments are authoritative. Extract scorer and assist names, but do not infer or change a player's team from score notation or post-match text. Backend code assigns every goal to the scorer's roster team.",
     "Only extract facts explicitly present in the text. Do not invent goals, assists, scores, awards, or bonus points.",
     "If the text says a player gets one extra point, put it in bonusPoints with points 1.",
     "If the text says 最佳后卫 followed by one or more player names, including formats such as 最佳后卫：欧巴，果子林, put it in awards with name 最佳后卫, points 0, and all playerNames. Concatenated names can represent multiple known players, for example 最佳后卫欧巴果子林 means 欧巴 and 果之林 each receive one award count.",
@@ -399,22 +400,41 @@ function normalizeGame(rawGame: unknown, index: number): CleanGame {
     sectionNo,
     teamA: teamA === "external" ? scheduled[0] : teamA,
     teamB: teamB === "external" ? scheduled[1] : teamB,
-    scoreA: Math.max(0, Math.trunc(score.scoreA ?? countGoalsForTeam(goals, teamA))),
-    scoreB: Math.max(0, Math.trunc(score.scoreB ?? countGoalsForTeam(goals, teamB))),
+    scoreA: score.scoreA === undefined ? undefined : Math.max(0, Math.trunc(score.scoreA)),
+    scoreB: score.scoreB === undefined ? undefined : Math.max(0, Math.trunc(score.scoreB)),
     rawText,
     goals
   };
 }
 
-function countGoalsForTeam(goals: CleanGoal[], team: AiTeamColor | undefined) {
+function countGoalsForTeam(goals: ParsedGoalEvent[], team: AiTeamColor | undefined) {
   if (!team) return 0;
   return goals.filter((goal) => goal.team === team).reduce((sum, goal) => sum + goal.count, 0);
+}
+
+function alignScoresWithAssignedGoals(game: CleanGame, events: ParsedGoalEvent[]) {
+  const goalsA = countGoalsForTeam(events, game.teamA);
+  const goalsB = countGoalsForTeam(events, game.teamB);
+  const scoreA = game.scoreA ?? goalsA;
+  const scoreB = game.scoreB ?? goalsB;
+
+  if (goalsA <= scoreA && goalsB <= scoreB) {
+    return { scoreA, scoreB };
+  }
+
+  if (goalsA <= scoreB && goalsB <= scoreA) {
+    return { scoreA: scoreB, scoreB: scoreA };
+  }
+
+  return { scoreA, scoreB };
 }
 
 function parsedGoal(goal: CleanGoal, input: AiParseInput): ParsedGoalEvent {
   const scorer = matchPlayer(goal.scorerName, input.players);
   const assist = goal.assistName ? matchPlayer(goal.assistName, input.players) : null;
-  const team = goal.team ?? assignmentTeam(scorer.playerId, input.teamAssignments);
+  const team = input.matchType === "EXTERNAL"
+    ? "external"
+    : assignmentTeam(scorer.playerId, input.teamAssignments);
   const confidence = Math.min(
     scorer.confidence,
     assist ? assist.confidence : 1,
@@ -554,13 +574,23 @@ function finalizeAiJson(parsedJson: unknown, input: AiParseInput): ParseResult {
 
   const normalizedGames = fillInternalGames(asArray(raw.games).map(normalizeGame));
   const games = normalizedGames.map((game) => {
-    const events = game.goals.map((goal) => parsedGoal(goal, input));
+    const events = game.goals.map((goal) => {
+      const event = parsedGoal(goal, input);
+      const assistTeam = event.assist
+        ? assignmentTeam(event.assist.playerId, input.teamAssignments)
+        : event.team;
+      event.needsReview = event.needsReview
+        || (event.team !== game.teamA && event.team !== game.teamB)
+        || Boolean(event.assist && assistTeam !== event.team);
+      return event;
+    });
+    const scores = alignScoresWithAssignedGoals(game, events);
     return {
       sectionNo: game.sectionNo,
       teamA: game.teamA,
       teamB: game.teamB,
-      scoreA: game.scoreA,
-      scoreB: game.scoreB,
+      scoreA: scores.scoreA,
+      scoreB: scores.scoreB,
       events,
       rawText: game.rawText
     };

@@ -1433,6 +1433,8 @@ a {
 }
 
 .public-avatar img {
+  position: absolute;
+  inset: 0;
   border-radius: 50%;
 }
 

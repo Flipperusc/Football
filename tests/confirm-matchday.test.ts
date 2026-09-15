@@ -94,4 +94,148 @@ describe("confirmMatchDay identity preflight", () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  it("writes the scorer roster team instead of a conflicting parsed team", async () => {
+    const goalCreate = vi.fn().mockResolvedValue({ id: "goal-1" });
+    const tx = {
+      matchDay: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "match-1",
+          rawText: "第一节 1:0 甲进球",
+          assignments: [{ matchDayId: "match-1", playerId: "player-1", teamColor: "WHITE" }]
+        }),
+        update: vi.fn().mockResolvedValue({ id: "match-1" })
+      },
+      player: { findMany: vi.fn() },
+      goalEvent: { deleteMany: vi.fn(), create: goalCreate },
+      playerMatchdayPoint: { deleteMany: vi.fn(), createMany: vi.fn() },
+      teamMatchdayResult: { deleteMany: vi.fn(), createMany: vi.fn() },
+      award: { deleteMany: vi.fn(), create: vi.fn() },
+      internalGame: {
+        deleteMany: vi.fn(),
+        create: vi.fn(({ data }) => Promise.resolve({ id: `game-${data.sectionNo}`, sectionNo: data.sectionNo }))
+      },
+      playerAlias: { create: vi.fn() },
+      matchParseResult: { create: vi.fn() }
+    };
+    const prisma = {
+      $transaction: vi.fn((callback: (client: typeof tx) => Promise<unknown>) => callback(tx))
+    } as unknown as PrismaClient;
+
+    await confirmMatchDay(prisma, {
+      matchDayId: "match-1",
+      parsedJson: {
+        matchType: "internal",
+        games: [
+          {
+            sectionNo: 1,
+            teamA: "white",
+            teamB: "blue",
+            scoreA: 1,
+            scoreB: 0,
+            rawText: "第一节 1:0 甲进球",
+            events: [
+              {
+                type: "goal",
+                team: "blue",
+                scorer: { rawName: "甲", playerId: "player-1", confidence: 1, candidates: [] },
+                assist: null,
+                count: 1,
+                rawText: "甲进球",
+                confidence: 1,
+                needsReview: false
+              }
+            ]
+          },
+          { sectionNo: 2, teamA: "white", teamB: "red", scoreA: 0, scoreB: 0, events: [], rawText: "" },
+          { sectionNo: 3, teamA: "red", teamB: "blue", scoreA: 0, scoreB: 0, events: [], rawText: "" }
+        ],
+        awards: [],
+        bonusPoints: [],
+        uncertainItems: []
+      },
+      manualTeamRanks: [
+        { teamColor: "WHITE", rank: 1 },
+        { teamColor: "RED", rank: 2 },
+        { teamColor: "BLUE", rank: 3 }
+      ]
+    });
+
+    expect(goalCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ scorerId: "player-1", teamColor: "WHITE" })
+    });
+  });
+
+  it("rejects a cross-team assist before deleting confirmed data", async () => {
+    const formalDeletes = {
+      goalEvent: vi.fn(),
+      playerMatchdayPoint: vi.fn(),
+      teamMatchdayResult: vi.fn(),
+      award: vi.fn(),
+      internalGame: vi.fn()
+    };
+    const tx = {
+      matchDay: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "match-1",
+          assignments: [
+            { matchDayId: "match-1", playerId: "scorer-1", teamColor: "WHITE" },
+            { matchDayId: "match-1", playerId: "assist-1", teamColor: "RED" }
+          ]
+        })
+      },
+      goalEvent: { deleteMany: formalDeletes.goalEvent },
+      playerMatchdayPoint: { deleteMany: formalDeletes.playerMatchdayPoint },
+      teamMatchdayResult: { deleteMany: formalDeletes.teamMatchdayResult },
+      award: { deleteMany: formalDeletes.award },
+      internalGame: { deleteMany: formalDeletes.internalGame }
+    };
+    const prisma = {
+      $transaction: vi.fn((callback: (client: typeof tx) => Promise<unknown>) => callback(tx))
+    } as unknown as PrismaClient;
+
+    await expect(
+      confirmMatchDay(prisma, {
+        matchDayId: "match-1",
+        parsedJson: {
+          matchType: "internal",
+          games: [
+            {
+              sectionNo: 1,
+              teamA: "white",
+              teamB: "blue",
+              scoreA: 1,
+              scoreB: 0,
+              rawText: "第一节 1:0 乙助攻甲",
+              events: [
+                {
+                  type: "goal",
+                  team: "white",
+                  scorer: { rawName: "甲", playerId: "scorer-1", confidence: 1, candidates: [] },
+                  assist: { rawName: "乙", playerId: "assist-1", confidence: 1, candidates: [] },
+                  count: 1,
+                  rawText: "乙助攻甲",
+                  confidence: 1,
+                  needsReview: false
+                }
+              ]
+            },
+            { sectionNo: 2, teamA: "white", teamB: "red", scoreA: 0, scoreB: 0, events: [], rawText: "" },
+            { sectionNo: 3, teamA: "red", teamB: "blue", scoreA: 0, scoreB: 0, events: [], rawText: "" }
+          ],
+          awards: [],
+          bonusPoints: [],
+          uncertainItems: []
+        },
+        manualTeamRanks: [
+          { teamColor: "WHITE", rank: 1 },
+          { teamColor: "RED", rank: 2 },
+          { teamColor: "BLUE", rank: 3 }
+        ]
+      })
+    ).rejects.toThrow("不在同一队");
+
+    expect(formalDeletes.goalEvent).not.toHaveBeenCalled();
+    expect(formalDeletes.internalGame).not.toHaveBeenCalled();
+  });
+
 });

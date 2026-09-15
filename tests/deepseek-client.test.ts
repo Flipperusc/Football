@@ -90,6 +90,35 @@ describe("shared DeepSeek client", () => {
     expect(logText).not.toContain("test-secret-key");
   });
 
+  it("supports a vision model override and multimodal user content", async () => {
+    const imageDataUrl = "data:image/png;base64,iVBORw0KGgo=";
+    const fetchMock = vi.fn().mockResolvedValue(successResponse('{"ok":true}'));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      requestDeepSeekJson({
+        entrypoint: "roster-image-ocr",
+        prompt: "识别图片中的红蓝白分队名单",
+        model: "deepseek-flash",
+        userContent: [
+          { type: "text", text: "识别图片中的红蓝白分队名单" },
+          { type: "image_url", image_url: { url: imageDataUrl } }
+        ],
+        parseContent: (content) => JSON.parse(content) as { ok: boolean }
+      })
+    ).resolves.toMatchObject({
+      parsed: { ok: true },
+      modelName: "deepseek-flash"
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(body.model).toBe("deepseek-flash");
+    expect(body.messages[1].content).toEqual([
+      { type: "text", text: "识别图片中的红蓝白分队名单" },
+      { type: "image_url", image_url: { url: imageDataUrl } }
+    ]);
+  });
+
   it.each([429, 500, 503])("retries transient HTTP %s once", async (status) => {
     const fetchMock = vi
       .fn()

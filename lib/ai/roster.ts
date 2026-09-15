@@ -44,6 +44,11 @@ type RosterParseInput = {
   players: ParserPlayer[];
 };
 
+type RosterImageParseInput = {
+  imageDataUrl: string;
+  players: ParserPlayer[];
+};
+
 type AiRosterRow = {
   teamColor: "RED" | "BLUE" | "WHITE" | "EXTERNAL";
   role: "PLAYER" | "GOALKEEPER";
@@ -61,6 +66,12 @@ const aiRosterResultSchema = z.object({
     )
     .default([])
 });
+
+const aiRosterImageResultSchema = aiRosterResultSchema.extend({
+  rawText: z.string().trim().min(1).max(20_000)
+});
+
+const DEEPSEEK_ROSTER_VISION_MODEL = "deepseek-flash";
 
 const teamPrefixMatchers: { teamColor: AiRosterRow["teamColor"]; pattern: RegExp }[] = [
   { teamColor: "RED", pattern: /^\s*(?:\u7ea2\u961f?|\bred\b)\s*[:\uFF1A,，、;\s-]*/i },
@@ -254,6 +265,7 @@ function finalizeRows(rows: AiRosterRow[], input: RosterParseInput): RosterParse
   const assignments: RosterAssignment[] = [];
   const uncertainItems: RosterParseResult["uncertainItems"] = [];
   const seen = new Set<string>();
+  const internalTeamByPlayer = new Map<string, "RED" | "BLUE" | "WHITE">();
 
   for (const row of rows) {
     const rawName = sanitizePersonName(row.rawName);
@@ -263,6 +275,24 @@ function finalizeRows(rows: AiRosterRow[], input: RosterParseInput): RosterParse
     if (input.matchType === "INTERNAL" && teamColor === "EXTERNAL") continue;
 
     const matched = matchRawName(rawName, input.players);
+    if (input.matchType === "INTERNAL" && matched.playerId) {
+      const previousTeam = internalTeamByPlayer.get(matched.playerId);
+      if (previousTeam && previousTeam !== teamColor) {
+        uncertainItems.push({
+          rawText: rawName,
+          reason: "同一球员被识别到多个分队，已保留首次分队，请人工检查。",
+          candidates: [
+            {
+              playerId: matched.playerId,
+              name: matched.matchedName ?? rawName,
+              confidence: matched.confidence
+            }
+          ]
+        });
+        continue;
+      }
+      if (teamColor !== "EXTERNAL") internalTeamByPlayer.set(matched.playerId, teamColor);
+    }
     const key = `${teamColor}:${matched.playerId ?? rawName}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -318,6 +348,25 @@ function buildRosterPrompt(input: RosterParseInput) {
   ].join("\n\n");
 }
 
+function buildRosterImagePrompt(players: ParserPlayer[]) {
+  const playerList = players.map((player) => ({
+    name: player.name,
+    aliases: player.aliases.map((alias) => alias.alias)
+  }));
+
+  return [
+    "You are an OCR and roster-structuring engine for one Chinese internal football match roster image. Return valid JSON only.",
+    "Read the image layout, headings, columns, labels, and Chinese names. Identify which visible names belong to RED, BLUE, or WHITE.",
+    "Return exactly this shape: {\"rawText\":\"normalized OCR text\",\"assignments\":[{\"teamColor\":\"RED|BLUE|WHITE\",\"role\":\"PLAYER|GOALKEEPER\",\"rawName\":\"Chinese name from image\"}]}",
+    "rawText must be editable normalized roster text ordered as red team, blue team, then white team, with a team heading and one visible name per line.",
+    "Ignore scores, dates, times, jersey numbers, chat messages, watermarks, and other non-roster content. Never treat a number as a player.",
+    "Only include a person if the name is visibly present in the image. Do not invent or move a player between teams.",
+    "Use the known player names and aliases only to correct visually plausible OCR characters; never use them to add a player who is not visible.",
+    "If a goalkeeper is not explicitly labeled, keep role PLAYER; application rules will consistently select the last recognized name in each team as goalkeeper.",
+    `Known players: ${JSON.stringify(playerList)}`
+  ].join("\n\n");
+}
+
 export async function parseRosterWithAi(input: RosterParseInput) {
   if (!isDeepSeekConfigured()) {
     return {
@@ -338,6 +387,41 @@ export async function parseRosterWithAi(input: RosterParseInput) {
 
   return {
     parsed: result.parsed,
+    modelName: result.modelName,
+    usedFallback: false
+  };
+}
+
+export async function parseRosterImageWithAi(input: RosterImageParseInput) {
+  const prompt = buildRosterImagePrompt(input.players);
+  const result = await requestDeepSeekJson({
+    entrypoint: "roster-image-ocr",
+    model: DEEPSEEK_ROSTER_VISION_MODEL,
+    prompt,
+    userContent: [
+      { type: "text", text: prompt },
+      { type: "image_url", image_url: { url: input.imageDataUrl } }
+    ],
+    parseContent: (content) => {
+      const imageResult = aiRosterImageResultSchema.parse(JSON.parse(extractJson(content)));
+      const rosterInput: RosterParseInput = {
+        rawText: imageResult.rawText,
+        matchType: "INTERNAL",
+        players: input.players
+      };
+      const rows = imageResult.assignments.length
+        ? imageResult.assignments
+        : localRows(rosterInput);
+
+      return {
+        ocrText: imageResult.rawText,
+        parsed: rosterParseResultSchema.parse(finalizeRows(rows, rosterInput))
+      };
+    }
+  });
+
+  return {
+    ...result.parsed,
     modelName: result.modelName,
     usedFallback: false
   };

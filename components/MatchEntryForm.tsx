@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, App, Button, Form, Input, Select, Space, Tag } from "antd";
-import { Plus, Send, Wand2, UsersRound } from "lucide-react";
+import { Plus, Send, Upload, Wand2, UsersRound } from "lucide-react";
 import type { MatchDay, Player, Season } from "@/lib/client-types";
 import { getRequestErrorMessage, requestJson } from "@/lib/client-types";
 import { useElapsedSeconds } from "@/lib/use-elapsed-seconds";
@@ -44,6 +44,15 @@ type RosterParseResponse = {
   usedFallback: boolean;
 };
 
+type RosterImageParseResponse = RosterParseResponse & {
+  ocrText: string;
+};
+
+type RecognizeSource = "text" | "image";
+
+const rosterImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const maxRosterImageBytes = 8 * 1024 * 1024;
+
 const teamLabels: Record<InternalTeamColor, string> = {
   RED: "红队",
   BLUE: "蓝队",
@@ -72,10 +81,12 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
   const { message } = App.useApp();
   const router = useRouter();
   const [form] = Form.useForm<FormValues>();
+  const rosterImageInputRef = useRef<HTMLInputElement>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [submitPhase, setSubmitPhase] = useState<SubmitPhase>("idle");
   const [recognizing, setRecognizing] = useState(false);
+  const [recognizeSource, setRecognizeSource] = useState<RecognizeSource>("text");
   const [editingMatchDayId, setEditingMatchDayId] = useState<string>();
   const [editingConfirmedMatch, setEditingConfirmedMatch] = useState(false);
   const [parseFailed, setParseFailed] = useState(false);
@@ -206,6 +217,15 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
     });
   }
 
+  async function parseRosterImage(file: File) {
+    const formData = new FormData();
+    formData.append("file", file);
+    return requestJson<RosterImageParseResponse>("/api/roster/parse-image", {
+      method: "POST",
+      body: formData
+    });
+  }
+
   async function addAlias() {
     const alias = aliasText.trim();
     if (!aliasPlayerId || !alias) {
@@ -238,6 +258,65 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
     }
   }
 
+  function applyInternalRosterResult(result: RosterParseResponse, sourceLabel: string) {
+    const nextTeamPlayers: Record<InternalTeamColor, string[]> = {
+      RED: [],
+      BLUE: [],
+      WHITE: []
+    };
+    const nextGoalkeepers: Record<InternalTeamColor, string | undefined> = {
+      RED: undefined,
+      BLUE: undefined,
+      WHITE: undefined
+    };
+    const recognizedPlayerIds = new Set<string>();
+
+    for (const row of result.parsed.assignments) {
+      if (
+        !row.playerId ||
+        !isInternalTeam(row.teamColor) ||
+        recognizedPlayerIds.has(row.playerId)
+      ) {
+        continue;
+      }
+      recognizedPlayerIds.add(row.playerId);
+      if (row.role === "GOALKEEPER") {
+        nextGoalkeepers[row.teamColor] = row.playerId;
+      } else {
+        nextTeamPlayers[row.teamColor].push(row.playerId);
+      }
+    }
+
+    setTeamPlayers((current) => ({
+      RED: unique([
+        ...current.RED.filter((id) => !recognizedPlayerIds.has(id)),
+        ...nextTeamPlayers.RED
+      ]),
+      BLUE: unique([
+        ...current.BLUE.filter((id) => !recognizedPlayerIds.has(id)),
+        ...nextTeamPlayers.BLUE
+      ]),
+      WHITE: unique([
+        ...current.WHITE.filter((id) => !recognizedPlayerIds.has(id)),
+        ...nextTeamPlayers.WHITE
+      ])
+    }));
+    setGoalkeepers((current) => ({
+      RED: nextGoalkeepers.RED ??
+        (current.RED && !recognizedPlayerIds.has(current.RED) ? current.RED : undefined),
+      BLUE: nextGoalkeepers.BLUE ??
+        (current.BLUE && !recognizedPlayerIds.has(current.BLUE) ? current.BLUE : undefined),
+      WHITE: nextGoalkeepers.WHITE ??
+        (current.WHITE && !recognizedPlayerIds.has(current.WHITE) ? current.WHITE : undefined)
+    }));
+
+    const uncertainCount = result.parsed.uncertainItems.length;
+    if (uncertainCount > 0) {
+      setRecognizeWarning(`有 ${uncertainCount} 项没有高置信度匹配，请检查球员名单和别名。`);
+    }
+    message.success(`${sourceLabel} 已识别 ${recognizedPlayerIds.size} 名球员`);
+  }
+
   async function recognizeInternalRoster() {
     if (!rosterText.trim()) {
       message.warning("请先粘贴分队名单");
@@ -245,49 +324,41 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
     }
 
     setRecognizing(true);
+    setRecognizeSource("text");
     setRecognizeWarning(undefined);
     setRecognizeError(undefined);
     try {
       const result = await parseRoster(rosterText, "INTERNAL");
-      const nextTeamPlayers: Record<InternalTeamColor, string[]> = {
-        RED: [],
-        BLUE: [],
-        WHITE: []
-      };
-      const nextGoalkeepers: Record<InternalTeamColor, string | undefined> = {
-        RED: undefined,
-        BLUE: undefined,
-        WHITE: undefined
-      };
-
-      for (const row of result.parsed.assignments) {
-        if (!row.playerId || !isInternalTeam(row.teamColor)) continue;
-        if (row.role === "GOALKEEPER") {
-          nextGoalkeepers[row.teamColor] = row.playerId;
-        } else {
-          nextTeamPlayers[row.teamColor].push(row.playerId);
-        }
-      }
-
-      setTeamPlayers((current) => ({
-        RED: unique([...current.RED, ...nextTeamPlayers.RED]),
-        BLUE: unique([...current.BLUE, ...nextTeamPlayers.BLUE]),
-        WHITE: unique([...current.WHITE, ...nextTeamPlayers.WHITE])
-      }));
-      setGoalkeepers((current) => ({
-        RED: nextGoalkeepers.RED ?? current.RED,
-        BLUE: nextGoalkeepers.BLUE ?? current.BLUE,
-        WHITE: nextGoalkeepers.WHITE ?? current.WHITE
-      }));
-
-      const count = result.parsed.assignments.filter((row) => row.playerId).length;
-      const uncertainCount = result.parsed.uncertainItems.length;
-      if (uncertainCount > 0) {
-        setRecognizeWarning(`有 ${uncertainCount} 项没有高置信度匹配，请检查球员名单和别名。`);
-      }
-      message.success(`${result.usedFallback ? "本地规则" : "DeepSeek"} 已识别 ${count} 名球员`);
+      applyInternalRosterResult(result, result.usedFallback ? "本地规则" : "DeepSeek");
     } catch (error) {
       const errorMessage = getRequestErrorMessage(error, "识别阵容失败");
+      setRecognizeError(errorMessage);
+      message.error(errorMessage);
+    } finally {
+      setRecognizing(false);
+    }
+  }
+
+  async function recognizeInternalRosterImage(file: File) {
+    if (file.type && !rosterImageTypes.has(file.type)) {
+      message.warning("仅支持 JPG、PNG、WEBP、GIF 分队图片");
+      return;
+    }
+    if (file.size > maxRosterImageBytes) {
+      message.warning("分队图片不能超过 8MB");
+      return;
+    }
+
+    setRecognizing(true);
+    setRecognizeSource("image");
+    setRecognizeWarning(undefined);
+    setRecognizeError(undefined);
+    try {
+      const result = await parseRosterImage(file);
+      setRosterText(result.ocrText);
+      applyInternalRosterResult(result, "DeepSeek Flash OCR");
+    } catch (error) {
+      const errorMessage = getRequestErrorMessage(error, "识别分队图片失败");
       setRecognizeError(errorMessage);
       message.error(errorMessage);
     } finally {
@@ -302,6 +373,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
     }
 
     setRecognizing(true);
+    setRecognizeSource("text");
     setRecognizeWarning(undefined);
     setRecognizeError(undefined);
     try {
@@ -445,11 +517,15 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
         <Alert
           type="info"
           showIcon
-          message={`DeepSeek 正在识别名单，已等待 ${recognizeElapsedSeconds} 秒，最长约 90 秒，请勿重复点击`}
+          message={`${
+            recognizeSource === "image" ? "DeepSeek Flash 正在 OCR 分队照片" : "DeepSeek 正在识别名单"
+          }，已等待 ${recognizeElapsedSeconds} 秒，最长约 90 秒，请勿重复点击`}
           description={
             recognizeElapsedSeconds >= 45
               ? "首次尝试时间较长，系统可能正在重试。请继续等待当前请求返回。"
-              : "识别完成后会自动填入名单。"
+              : recognizeSource === "image"
+                ? "OCR 完成后会回填可编辑文本，并自动填入红、蓝、白队阵容。"
+                : "识别完成后会自动填入名单。"
           }
           style={{ marginBottom: 12 }}
         />
@@ -488,7 +564,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
       {type === "INTERNAL" ? (
         <Space direction="vertical" size={12} style={{ width: "100%" }}>
           <div className="team-band">
-            <Form.Item label="粘贴分队名单">
+            <Form.Item label="粘贴分队名单，或上传分队照片">
               <Input.TextArea
                 rows={8}
                 value={rosterText}
@@ -496,14 +572,39 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
                 placeholder={"红\n果之林\n欧巴\n十三\n...\n10\n小王\n蓝\n肖老师\n...\n白\n游老师\n..."}
               />
             </Form.Item>
-            <Button
-              icon={<UsersRound size={16} />}
-              onClick={recognizeInternalRoster}
-              loading={recognizing}
-              disabled={submitting || recognizing}
-            >
-              DeepSeek 识别并填入阵容
-            </Button>
+            <Space wrap>
+              <Button
+                icon={<UsersRound size={16} />}
+                onClick={recognizeInternalRoster}
+                loading={recognizing && recognizeSource === "text"}
+                disabled={submitting || recognizing}
+              >
+                DeepSeek 识别文本并填入阵容
+              </Button>
+              <Button
+                icon={<Upload size={16} />}
+                onClick={() => rosterImageInputRef.current?.click()}
+                loading={recognizing && recognizeSource === "image"}
+                disabled={submitting || recognizing}
+              >
+                上传分队照片识别
+              </Button>
+              <input
+                ref={rosterImageInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                aria-label="选择分队照片"
+                style={{ display: "none" }}
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = "";
+                  if (file) void recognizeInternalRosterImage(file);
+                }}
+              />
+            </Space>
+            <p className="muted" style={{ margin: "8px 0 0" }}>
+              支持 JPG、PNG、WEBP、GIF，最大 8MB。图片会发送给 DeepSeek 做本次 OCR，本系统不会保存。
+            </p>
           </div>
 
           {quickAliasPanel}

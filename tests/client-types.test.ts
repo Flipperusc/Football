@@ -45,6 +45,27 @@ describe("requestJson", () => {
     });
   });
 
+  it("lets the browser set the multipart boundary for FormData requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const formData = new FormData();
+    formData.append("file", new Blob(["image"], { type: "image/png" }), "roster.png");
+
+    await requestJson("/api/roster/parse-image", {
+      method: "POST",
+      body: formData
+    });
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.body).toBe(formData);
+    expect(new Headers(init.headers).has("Content-Type")).toBe(false);
+  });
+
   it("turns an nginx HTML 504 into a Chinese match-parse error", async () => {
     vi.stubGlobal(
       "fetch",

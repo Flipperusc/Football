@@ -118,6 +118,48 @@ describe("post-match AI parsing", () => {
     expect(requestBody.max_tokens).toBe(4096);
   });
 
+  it("uses roster assignments instead of conflicting AI team guesses", async () => {
+    mockDeepSeek({
+      matchType: "internal",
+      games: [
+        {
+          sectionNo: 1,
+          teamA: "white",
+          teamB: "blue",
+          scoreA: 0,
+          scoreB: 1,
+          rawText: "第一节 1:0 道长助攻宇哥",
+          goals: [
+            {
+              team: "blue",
+              scorerName: "宇哥",
+              assistName: "道长",
+              count: 1,
+              rawText: "道长助攻宇哥"
+            }
+          ]
+        }
+      ],
+      bonusPoints: [],
+      awards: [],
+      uncertainItems: []
+    });
+
+    const result = await parseMatchWithAi({
+      rawText: "第一节 1:0 道长助攻宇哥",
+      matchType: "INTERNAL",
+      players,
+      teamAssignments
+    });
+
+    const parsed = expectInternalParsed(result.parsed);
+    expect(parsed.games[0].events[0]).toMatchObject({
+      team: "white",
+      needsReview: false
+    });
+    expect(parsed.games[0]).toMatchObject({ scoreA: 1, scoreB: 0 });
+  });
+
   it("salvages old database-shaped DeepSeek output with missing confidence fields", async () => {
     mockDeepSeek({
       matchType: "internal",
