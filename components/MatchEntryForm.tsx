@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Alert, App, Button, Form, Input, Select, Space, Tag } from "antd";
+import { Alert, App, Button, Form, Input, Select, Space, Tag, Upload as AntUpload } from "antd";
 import { Plus, Send, Upload, Wand2, UsersRound } from "lucide-react";
 import type { MatchDay, Player, Season } from "@/lib/client-types";
 import { getRequestErrorMessage, requestJson } from "@/lib/client-types";
@@ -81,7 +81,6 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
   const { message } = App.useApp();
   const router = useRouter();
   const [form] = Form.useForm<FormValues>();
-  const rosterImageInputRef = useRef<HTMLInputElement>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [submitPhase, setSubmitPhase] = useState<SubmitPhase>("idle");
@@ -258,7 +257,11 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
     }
   }
 
-  function applyInternalRosterResult(result: RosterParseResponse, sourceLabel: string) {
+  function applyInternalRosterResult(
+    result: RosterParseResponse,
+    sourceLabel: string,
+    options: { replaceGoalkeepers?: boolean } = {}
+  ) {
     const nextTeamPlayers: Record<InternalTeamColor, string[]> = {
       RED: [],
       BLUE: [],
@@ -301,14 +304,21 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
         ...nextTeamPlayers.WHITE
       ])
     }));
-    setGoalkeepers((current) => ({
-      RED: nextGoalkeepers.RED ??
-        (current.RED && !recognizedPlayerIds.has(current.RED) ? current.RED : undefined),
-      BLUE: nextGoalkeepers.BLUE ??
-        (current.BLUE && !recognizedPlayerIds.has(current.BLUE) ? current.BLUE : undefined),
-      WHITE: nextGoalkeepers.WHITE ??
-        (current.WHITE && !recognizedPlayerIds.has(current.WHITE) ? current.WHITE : undefined)
-    }));
+    setGoalkeepers((current) =>
+      options.replaceGoalkeepers
+        ? nextGoalkeepers
+        : {
+            RED:
+              nextGoalkeepers.RED ??
+              (current.RED && !recognizedPlayerIds.has(current.RED) ? current.RED : undefined),
+            BLUE:
+              nextGoalkeepers.BLUE ??
+              (current.BLUE && !recognizedPlayerIds.has(current.BLUE) ? current.BLUE : undefined),
+            WHITE:
+              nextGoalkeepers.WHITE ??
+              (current.WHITE && !recognizedPlayerIds.has(current.WHITE) ? current.WHITE : undefined)
+          }
+    );
 
     const uncertainCount = result.parsed.uncertainItems.length;
     if (uncertainCount > 0) {
@@ -356,7 +366,9 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
     try {
       const result = await parseRosterImage(file);
       setRosterText(result.ocrText);
-      applyInternalRosterResult(result, "DeepSeek Flash OCR");
+      applyInternalRosterResult(result, "DeepSeek Flash OCR", {
+        replaceGoalkeepers: true
+      });
     } catch (error) {
       const errorMessage = getRequestErrorMessage(error, "识别分队图片失败");
       setRecognizeError(errorMessage);
@@ -581,30 +593,32 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
               >
                 DeepSeek 识别文本并填入阵容
               </Button>
-              <Button
-                icon={<Upload size={16} />}
-                onClick={() => rosterImageInputRef.current?.click()}
-                loading={recognizing && recognizeSource === "image"}
-                disabled={submitting || recognizing}
-              >
-                上传分队照片识别
-              </Button>
-              <input
-                ref={rosterImageInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                aria-label="选择分队照片"
-                style={{ display: "none" }}
-                onChange={(event) => {
-                  const file = event.currentTarget.files?.[0];
-                  event.currentTarget.value = "";
-                  if (file) void recognizeInternalRosterImage(file);
-                }}
-              />
             </Space>
-            <p className="muted" style={{ margin: "8px 0 0" }}>
-              支持 JPG、PNG、WEBP、GIF，最大 8MB。图片会发送给 DeepSeek 做本次 OCR，本系统不会保存。
-            </p>
+            <div style={{ marginTop: 12 }}>
+              <AntUpload.Dragger
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                multiple={false}
+                maxCount={1}
+                showUploadList={false}
+                disabled={submitting || recognizing}
+                beforeUpload={(file) => {
+                  void recognizeInternalRosterImage(file);
+                  return false;
+                }}
+              >
+                <p className="ant-upload-drag-icon">
+                  <Upload size={30} />
+                </p>
+                <p className="ant-upload-text">
+                  {recognizing && recognizeSource === "image"
+                    ? "DeepSeek Flash 正在识别分队照片"
+                    : "点击或将分队照片拖到此处"}
+                </p>
+                <p className="ant-upload-hint">
+                  支持 JPG、PNG、WEBP、GIF，最大 8MB。图片仅用于本次 OCR，本系统不会保存。
+                </p>
+              </AntUpload.Dragger>
+            </div>
           </div>
 
           {quickAliasPanel}

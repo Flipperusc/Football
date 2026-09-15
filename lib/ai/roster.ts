@@ -55,6 +55,8 @@ type AiRosterRow = {
   rawName: string;
 };
 
+type InternalGoalkeeperPolicy = "LAST_IN_TEAM" | "EXPLICIT_ONLY";
+
 const aiRosterResultSchema = z.object({
   assignments: z
     .array(
@@ -182,9 +184,11 @@ function matchRawName(rawName: string, players: ParserPlayer[]) {
 
 function applyInternalGoalkeeperRule(
   assignments: RosterAssignment[],
-  matchType: RosterParseInput["matchType"]
+  matchType: RosterParseInput["matchType"],
+  policy: InternalGoalkeeperPolicy
 ): RosterAssignment[] {
   if (matchType !== "INTERNAL") return assignments;
+  if (policy === "EXPLICIT_ONLY") return assignments;
 
   const lastIndexByTeam = new Map<"RED" | "BLUE" | "WHITE", number>();
   assignments.forEach((assignment, index) => {
@@ -261,7 +265,36 @@ function localRows(input: RosterParseInput): AiRosterRow[] {
   return rows;
 }
 
-function finalizeRows(rows: AiRosterRow[], input: RosterParseInput): RosterParseResult {
+function goalkeeperEvidenceKey(row: AiRosterRow, players: ParserPlayer[]) {
+  const matched = matchRawName(row.rawName, players);
+  return matched.playerId
+    ? `${row.teamColor}:player:${matched.playerId}`
+    : `${row.teamColor}:name:${normalize(row.rawName)}`;
+}
+
+function applyExplicitImageGoalkeeperEvidence(
+  rows: AiRosterRow[],
+  input: RosterParseInput
+): AiRosterRow[] {
+  const explicitGoalkeepers = new Set(
+    localRows(input)
+      .filter((row) => row.role === "GOALKEEPER")
+      .map((row) => goalkeeperEvidenceKey(row, input.players))
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    role: explicitGoalkeepers.has(goalkeeperEvidenceKey(row, input.players))
+      ? "GOALKEEPER"
+      : "PLAYER"
+  }));
+}
+
+function finalizeRows(
+  rows: AiRosterRow[],
+  input: RosterParseInput,
+  goalkeeperPolicy: InternalGoalkeeperPolicy = "LAST_IN_TEAM"
+): RosterParseResult {
   const assignments: RosterAssignment[] = [];
   const uncertainItems: RosterParseResult["uncertainItems"] = [];
   const seen = new Set<string>();
@@ -318,7 +351,10 @@ function finalizeRows(rows: AiRosterRow[], input: RosterParseInput): RosterParse
     }
   }
 
-  return { assignments: applyInternalGoalkeeperRule(assignments, input.matchType), uncertainItems };
+  return {
+    assignments: applyInternalGoalkeeperRule(assignments, input.matchType, goalkeeperPolicy),
+    uncertainItems
+  };
 }
 
 function localParseRoster(input: RosterParseInput): RosterParseResult {
@@ -359,10 +395,12 @@ function buildRosterImagePrompt(players: ParserPlayer[]) {
     "Read the image layout, headings, columns, labels, and Chinese names. Identify which visible names belong to RED, BLUE, or WHITE.",
     "Return exactly this shape: {\"rawText\":\"normalized OCR text\",\"assignments\":[{\"teamColor\":\"RED|BLUE|WHITE\",\"role\":\"PLAYER|GOALKEEPER\",\"rawName\":\"Chinese name from image\"}]}",
     "rawText must be editable normalized roster text ordered as red team, blue team, then white team, with a team heading and one visible name per line.",
+    "Preserve an explicitly visible GK, 门将, or 守门员 label in rawText on the same line as its player, normalized as 'GK 姓名'. Never add a goalkeeper label that is not visible in the image.",
     "Ignore scores, dates, times, jersey numbers, chat messages, watermarks, and other non-roster content. Never treat a number as a player.",
     "Only include a person if the name is visibly present in the image. Do not invent or move a player between teams.",
     "Use the known player names and aliases only to correct visually plausible OCR characters; never use them to add a player who is not visible.",
-    "If a goalkeeper is not explicitly labeled, keep role PLAYER; application rules will consistently select the last recognized name in each team as goalkeeper.",
+    "Set role GOALKEEPER only when GK, 门将, or 守门员 is visibly associated with that exact player in the image. Otherwise set role PLAYER.",
+    "Never infer a goalkeeper from player order, the last name in a team, a jersey number, a known player position, or football conventions. If the image has no explicit goalkeeper label, every assignment must use role PLAYER.",
     `Known players: ${JSON.stringify(playerList)}`
   ].join("\n\n");
 }
@@ -412,10 +450,13 @@ export async function parseRosterImageWithAi(input: RosterImageParseInput) {
       const rows = imageResult.assignments.length
         ? imageResult.assignments
         : localRows(rosterInput);
+      const rowsWithVerifiedGoalkeepers = applyExplicitImageGoalkeeperEvidence(rows, rosterInput);
 
       return {
         ocrText: imageResult.rawText,
-        parsed: rosterParseResultSchema.parse(finalizeRows(rows, rosterInput))
+        parsed: rosterParseResultSchema.parse(
+          finalizeRows(rowsWithVerifiedGoalkeepers, rosterInput, "EXPLICIT_ONLY")
+        )
       };
     }
   });

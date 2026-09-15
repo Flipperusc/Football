@@ -200,7 +200,7 @@ describe("roster parsing", () => {
     expect(requestBody.max_tokens).toBe(4096);
   });
 
-  it("uses the current DeepSeek Flash vision model and reuses roster matching", async () => {
+  it("uses the current DeepSeek Flash vision model without inferring a goalkeeper when the image has no marker", async () => {
     process.env.DEEPSEEK_API_KEY = "test-key";
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     const imageDataUrl = "data:image/png;base64,iVBORw0KGgo=";
@@ -216,7 +216,7 @@ describe("roster parsing", () => {
                   rawText: ocrText,
                   assignments: [
                     { teamColor: "RED", role: "PLAYER", rawName: rosterNames.RED[0] },
-                    { teamColor: "RED", role: "PLAYER", rawName: rosterNames.RED[1] }
+                    { teamColor: "RED", role: "GOALKEEPER", rawName: rosterNames.RED[1] }
                   ]
                 })
               }
@@ -244,7 +244,7 @@ describe("roster parsing", () => {
     ]);
     expect(result.parsed.assignments.map((row) => row.role)).toEqual([
       "PLAYER",
-      "GOALKEEPER"
+      "PLAYER"
     ]);
 
     const requestBody = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
@@ -252,6 +252,47 @@ describe("roster parsing", () => {
     expect(requestBody.messages[1].content).toEqual([
       expect.objectContaining({ type: "text" }),
       { type: "image_url", image_url: { url: imageDataUrl } }
+    ]);
+  });
+
+  it("keeps an image goalkeeper only when the OCR text explicitly labels the player", async () => {
+    process.env.DEEPSEEK_API_KEY = "test-key";
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const imageDataUrl = "data:image/png;base64,iVBORw0KGgo=";
+    const ocrText = `红\nGK ${rosterNames.RED[0]}\n${rosterNames.RED[1]}`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                finish_reason: "stop",
+                message: {
+                  content: JSON.stringify({
+                    rawText: ocrText,
+                    assignments: [
+                      { teamColor: "RED", role: "PLAYER", rawName: rosterNames.RED[0] },
+                      { teamColor: "RED", role: "GOALKEEPER", rawName: rosterNames.RED[1] }
+                    ]
+                  })
+                }
+              }
+            ]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      )
+    );
+
+    const result = await parseRosterImageWithAi({
+      imageDataUrl,
+      players: buildPlayers()
+    });
+
+    expect(result.parsed.assignments.map((row) => row.role)).toEqual([
+      "GOALKEEPER",
+      "PLAYER"
     ]);
   });
 });
