@@ -9,6 +9,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "node scripts/test-e2e.mjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev"
   },
@@ -23,6 +24,7 @@
     "zod": "3.24.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.1",
     "@types/node": "22.10.2",
     "@types/react": "18.3.17",
     "@types/react-dom": "18.3.5",

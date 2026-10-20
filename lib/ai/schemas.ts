@@ -19,8 +19,9 @@ export const matchedPlayerSchema = z.object({
 });
 
 export const parsedGoalEventSchema = z.object({
-  type: z.literal("goal"),
+  type: z.enum(["goal", "own_goal"]),
   team: aiTeamColorSchema.optional(),
+  needsTeamSelection: z.boolean().optional(),
   scorer: matchedPlayerSchema,
   assist: matchedPlayerSchema.nullable().optional(),
   count: z.number().int().positive().default(1),
@@ -69,7 +70,7 @@ export const internalParseResultSchema = z.object({
 
 export const externalParseResultSchema = z.object({
   matchType: z.literal("external"),
-  events: z.array(parsedGoalEventSchema).default([]),
+  events: z.array(parsedGoalEventSchema.refine((event) => event.type === "goal", "队外赛暂不支持乌龙球事件")).default([]),
   awards: z.array(parsedAwardSchema).default([]),
   bonusPoints: z.array(parsedBonusPointSchema).default([]),
   uncertainItems: z.array(uncertainItemSchema).default([])

@@ -8,6 +8,29 @@ import {
 } from "@/lib/stats/calculate";
 
 describe("football statistics", () => {
+  it("counts guest goals but excludes own goals while preserving every roster player's attendance and original points", () => {
+    const stats = calculateSeasonPlayerStats({
+      players: [{ id: "guest", name: "代打" }, { id: "absent", name: "临时未到" }, { id: "own", name: "乌龙" }],
+      matchDays: [{ id: "m1", seasonId: "s1", type: "INTERNAL" }],
+      assignments: [
+        { matchDayId: "m1", playerId: "guest", teamColor: "RED" },
+        { matchDayId: "m1", playerId: "absent", teamColor: "BLUE" },
+        { matchDayId: "m1", playerId: "own", teamColor: "WHITE" }
+      ],
+      goalEvents: [
+        { matchDayId: "m1", matchType: "INTERNAL", teamColor: "BLUE", scorerId: "guest", count: 1 },
+        { matchDayId: "m1", matchType: "INTERNAL", teamColor: "BLUE", scorerId: "own", assistPlayerId: "guest", count: 2, kind: "OWN_GOAL" }
+      ],
+      playerPoints: [
+        { matchDayId: "m1", playerId: "guest", basePoints: 3, bonusPoints: 0, totalPoints: 3 },
+        { matchDayId: "m1", playerId: "absent", basePoints: 2, bonusPoints: 0, totalPoints: 2 },
+        { matchDayId: "m1", playerId: "own", basePoints: 1, bonusPoints: 0, totalPoints: 1 }
+      ]
+    });
+    expect(stats[0]).toMatchObject({ internalGoals: 1, internalAssists: 0, internalAppearances: 1, internalSeasonPoints: 3 });
+    expect(stats[1]).toMatchObject({ internalGoals: 0, internalAppearances: 1, internalSeasonPoints: 2 });
+    expect(stats[2]).toMatchObject({ internalGoals: 0, internalAssists: 0, internalAppearances: 1, internalSeasonPoints: 1 });
+  });
   it("calculates section win draw loss points", () => {
     expect(
       calculateSectionPoints({

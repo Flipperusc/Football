@@ -1,0 +1,47 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: football_e2e
+          POSTGRES_PASSWORD: football_e2e
+          POSTGRES_DB: football_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U football_e2e"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://football_e2e:football_e2e@127.0.0.1:5432/football_e2e?schema=public
+      E2E_DATABASE_URL: postgresql://football_e2e:football_e2e@127.0.0.1:5432/football_e2e?schema=public
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm prisma:generate
+      - run: pnpm test
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-failure-traces
+          path: test-results/
+          retention-days: 7

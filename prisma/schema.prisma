@@ -29,6 +29,11 @@ enum MatchType {
   EXTERNAL
 }
 
+enum GoalKind {
+  NORMAL
+  OWN_GOAL
+}
+
 enum ParseStatus {
   PENDING
   PARSED
@@ -169,6 +174,11 @@ model GoalEvent {
   internalGame   InternalGame? @relation(fields: [internalGameId], references: [id], onDelete: SetNull)
   matchType      MatchType
   teamColor      TeamColor?
+  kind           GoalKind      @default(NORMAL)
+  scorerRosterTeam TeamColor?
+  assistRosterTeam TeamColor?
+  exceptionConfirmedAt DateTime?
+  exceptionConfirmedBy String?
   scorerId       String
   scorer         Player        @relation("ScorerEvents", fields: [scorerId], references: [id], onDelete: Restrict)
   assistPlayerId String?

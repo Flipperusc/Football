@@ -2,6 +2,7 @@ import { z } from "zod";
 import { parseResultSchema, type MatchedPlayer, type ParseResult, type ParsedGoalEvent } from "./schemas";
 import { localParseMatch, type ParserAssignment, type ParserPlayer } from "./local-parser";
 import { isDeepSeekConfigured, requestDeepSeekJson } from "./deepseek-client";
+import { isOwnGoalText, parseEventAttribution } from "./event-attribution";
 
 export type AiParseInput = {
   rawText: string;
@@ -19,6 +20,8 @@ export type AiParseOutput = {
 type AiTeamColor = "red" | "blue" | "white" | "external";
 
 type CleanGoal = {
+  type: "goal" | "own_goal";
+  isGuest: boolean;
   team?: AiTeamColor;
   scorerName: string;
   assistName?: string | null;
@@ -86,7 +89,7 @@ function buildPrompt(input: AiParseInput) {
     "For an external match, return this clean shape:",
     "{\"matchType\":\"external\",\"events\":[{\"team\":\"external\",\"scorerName\":\"name\",\"assistName\":\"name or null\",\"count\":1,\"rawText\":\"source fragment\"}],\"bonusPoints\":[],\"awards\":[],\"uncertainItems\":[]}",
     "Use sectionNo 1-6 for internal games. Internal team colors must be red, blue, or white. External team color must be external.",
-    "For internal matches, team assignments are authoritative. Extract scorer and assist names, but do not infer or change a player's team from score notation or post-match text. Backend code assigns every goal to the scorer's roster team.",
+    "For ordinary internal goals the roster is the default. If the source explicitly says a player temporarily represents another team, set isGuest:true and team to the benefiting team when known. Never change the daily roster. For own goals set type:own_goal, scorerName to the player who scored into their own net, assistName:null, and team to the benefiting opponent when known. Otherwise type:goal. Do not invent a team for ambiguous substitutions; omit team and add an uncertainItem. Own goals and guest goals always require human confirmation. Preserve explicitly stated score orientation; never reverse scores to fit roster teams.",
     "Only extract facts explicitly present in the text. Do not invent goals, assists, scores, awards, or bonus points.",
     "If the text says a player gets one extra point, put it in bonusPoints with points 1.",
     "If the text says 最佳后卫 followed by one or more player names, including formats such as 最佳后卫：欧巴，果子林, put it in awards with name 最佳后卫, points 0, and all playerNames. Concatenated names can represent multiple known players, for example 最佳后卫欧巴果子林 means 欧巴 and 果之林 each receive one award count.",
@@ -361,6 +364,8 @@ function normalizeGoal(rawGoal: unknown): CleanGoal | null {
   const rawText = readText(goal.rawText, goal.text, goal.description) || scorerName;
 
   return {
+    type: goal.type === "own_goal" || goal.kind === "OWN_GOAL" || isOwnGoalText(rawText) ? "own_goal" : "goal",
+    isGuest: goal.isGuest === true,
     team: colorFromUnknown(goal.team ?? goal.teamColor),
     scorerName,
     assistName,
@@ -429,12 +434,14 @@ function alignScoresWithAssignedGoals(game: CleanGame, events: ParsedGoalEvent[]
   return { scoreA, scoreB };
 }
 
-function parsedGoal(goal: CleanGoal, input: AiParseInput): ParsedGoalEvent {
+function parsedGoal(goal: CleanGoal, input: AiParseInput, game?: CleanGame): ParsedGoalEvent {
   const scorer = matchPlayer(goal.scorerName, input.players);
-  const assist = goal.assistName ? matchPlayer(goal.assistName, input.players) : null;
-  const team = input.matchType === "EXTERNAL"
-    ? "external"
-    : assignmentTeam(scorer.playerId, input.teamAssignments);
+  const ownGoal = input.matchType === "INTERNAL" && goal.type === "own_goal";
+  const assist = !ownGoal && goal.assistName ? matchPlayer(goal.assistName, input.players) : null;
+  const attribution = game ? parseEventAttribution({ rawText: goal.rawText, ownGoal,
+    rosterTeam: assignmentTeam(scorer.playerId, input.teamAssignments), teamA: game.teamA, teamB: game.teamB,
+    suggestedTeam: goal.team, guestHint: goal.isGuest }) : undefined;
+  const team = input.matchType === "EXTERNAL" ? "external" : attribution?.team;
   const confidence = Math.min(
     scorer.confidence,
     assist ? assist.confidence : 1,
@@ -442,14 +449,15 @@ function parsedGoal(goal: CleanGoal, input: AiParseInput): ParsedGoalEvent {
   );
 
   return {
-    type: "goal",
+    type: ownGoal ? "own_goal" : "goal",
     team,
+    needsTeamSelection: attribution?.needsTeamSelection,
     scorer,
     assist,
     count: goal.count,
     rawText: goal.rawText,
     confidence,
-    needsReview: !scorer.playerId || scorer.confidence < 0.75 || Boolean(assist && (!assist.playerId || assist.confidence < 0.75)) || !team
+    needsReview: Boolean(attribution?.special) || !scorer.playerId || scorer.confidence < 0.75 || Boolean(assist && (!assist.playerId || assist.confidence < 0.75)) || !team
   };
 }
 
@@ -573,9 +581,12 @@ function finalizeAiJson(parsedJson: unknown, input: AiParseInput): ParseResult {
   }
 
   const normalizedGames = fillInternalGames(asArray(raw.games).map(normalizeGame));
+  const orderedScorePattern = /[红蓝白]队?\s*(?:(?:vs|对|[-—/])\s*)?[红蓝白]队?[^\d\r\n。]{0,12}\d+\s*[:：比-]\s*\d+/i;
+  // When the source supplies team order, a roster conflict must never change the score.
+  const sourceHasOrderedScores = orderedScorePattern.test(input.rawText);
   const games = normalizedGames.map((game) => {
     const events = game.goals.map((goal) => {
-      const event = parsedGoal(goal, input);
+      const event = parsedGoal(goal, input, game);
       const assistTeam = event.assist
         ? assignmentTeam(event.assist.playerId, input.teamAssignments)
         : event.team;
@@ -584,7 +595,15 @@ function finalizeAiJson(parsedJson: unknown, input: AiParseInput): ParseResult {
         || Boolean(event.assist && assistTeam !== event.team);
       return event;
     });
-    const scores = alignScoresWithAssignedGoals(game, events);
+    const scores = sourceHasOrderedScores || orderedScorePattern.test(game.rawText)
+      || events.some((event) => event.needsReview || event.type === "own_goal")
+      ? { scoreA: game.scoreA ?? countGoalsForTeam(events, game.teamA), scoreB: game.scoreB ?? countGoalsForTeam(events, game.teamB) }
+      : alignScoresWithAssignedGoals(game, events);
+    if (countGoalsForTeam(events, game.teamA) > scores.scoreA || countGoalsForTeam(events, game.teamB) > scores.scoreB) {
+      events.forEach((event) => { event.needsReview = true; });
+      uncertainItems.push({ rawText: game.rawText || `第 ${game.sectionNo} 节`,
+        reason: "比分与进球归属不一致，请确认得分队、事件类型或比分", candidates: [] });
+    }
     return {
       sectionNo: game.sectionNo,
       teamA: game.teamA,

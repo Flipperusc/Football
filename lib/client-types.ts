@@ -18,6 +18,7 @@ export type Season = {
 
 export type MatchDay = {
   id: string;
+  updatedAt?: string;
   seasonId: string;
   date: string;
   type: "INTERNAL" | "EXTERNAL";

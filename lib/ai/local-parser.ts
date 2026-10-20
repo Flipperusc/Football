@@ -1,4 +1,6 @@
 import type { ParseResult, ParsedGoalEvent } from "./schemas";
+import type { InternalTeam } from "@/lib/match-events";
+import { isOwnGoalText, parseEventAttribution } from "./event-attribution";
 
 export type ParserPlayer = {
   id: string;
@@ -189,17 +191,69 @@ function eventNeedsReview(event: ParsedGoalEvent) {
 function parseGoalEvents(
   line: string,
   players: ParserPlayer[],
-  assignments: ParserAssignment[]
+  assignments: ParserAssignment[],
+  teams?: readonly [InternalTeam, InternalTeam]
 ): { events: ParsedGoalEvent[]; uncertainItems: ParseResult["uncertainItems"] } {
   const events: ParsedGoalEvent[] = [];
   const uncertainItems: ParseResult["uncertainItems"] = [];
+
+  function fragment(start: number, after: number) {
+    const nextName = findKnownNames(line.slice(after), players)
+      .map((record) => line.indexOf(record.alias, after)).filter((index) => index >= 0);
+    let end = nextName.length ? Math.min(...nextName) : line.length;
+    const boundary = line.slice(after, end).search(/[，,；;。]/);
+    if (boundary >= 0) {
+      const position = after + boundary;
+      // Keep a beneficiary clause, but never absorb the following player's event.
+      const beneficiary = line.slice(position).match(/^[，,；;]\s*[红蓝白]队?(?:得分|获益|受益)/);
+      end = Math.min(end, position + (beneficiary?.[0].length ?? 0));
+    }
+    const actions = [...line.slice(start, end).matchAll(/进球|(?:自摆)?乌龙(?:球)?/g)];
+    if (actions.length > 1) {
+      // A second action starts another event even when its player is unknown and no comma is present.
+      end = start + actions[0].index! + actions[0][0].length;
+    }
+    return line.slice(start, end).replace(/[，,；;\s]+$/, "");
+  }
+  function attribute(event: ParsedGoalEvent) {
+    if (teams) {
+      const result = parseEventAttribution({ rawText: event.rawText, ownGoal: event.type === "own_goal",
+        rosterTeam: teamForPlayer(event.scorer.playerId, assignments), teamA: teams[0], teamB: teams[1] });
+      event.team = result.team;
+      event.needsTeamSelection = result.needsTeamSelection;
+      event.needsReview = event.needsReview || result.special || result.needsTeamSelection;
+      if (result.needsTeamSelection) uncertainItems.push({ rawText: event.rawText, reason: "请确认本次得分队伍；当天分队不会改变", candidates: [event.scorer] });
+    }
+    return event;
+  }
+
+  if (teams) {
+    for (const match of line.matchAll(/(?:自摆)?乌龙(?:球)?/g)) {
+      const prefix = line.slice(0, match.index ?? 0);
+      const previousBoundary = [...prefix.matchAll(/[，,；;。]|进球|助攻|乌龙(?:球)?/g)].at(-1);
+      const clauseStart = previousBoundary ? previousBoundary.index! + previousBoundary[0].length : 0;
+      const clause = prefix.slice(clauseStart);
+      const record = nearestNameBefore(clause, clause.length, players);
+      if (!record) {
+        uncertainItems.push({ rawText: fragment(clauseStart, (match.index ?? 0) + match[0].length),
+          reason: "乌龙球球员未识别，请人工补充事件", candidates: [] });
+        continue;
+      }
+      const scorer = matchPlayer(record.alias, players);
+      events.push(attribute({ type: "own_goal", scorer, assist: null, count: 1,
+        rawText: fragment(line.lastIndexOf(record.alias, match.index), (match.index ?? 0) + match[0].length),
+        confidence: scorer.confidence, needsReview: true }));
+    }
+  }
 
   for (const match of line.matchAll(/助攻/g)) {
     const assistRecord = nearestNameBefore(line, match.index ?? 0, players);
     const scorerRecord = nearestNameAfter(line, (match.index ?? 0) + 2, players);
     if (!assistRecord || !scorerRecord) continue;
 
-    const rawText = `${assistRecord.alias}助攻${scorerRecord.alias}`;
+    const scorerIndex = line.indexOf(scorerRecord.alias, (match.index ?? 0) + 2);
+    const rawText = fragment(line.lastIndexOf(assistRecord.alias, match.index), scorerIndex + scorerRecord.alias.length);
+    if (teams && isOwnGoalText(rawText)) continue;
     const scorer = matchPlayer(scorerRecord.alias, players);
     const assist = matchPlayer(assistRecord.alias, players);
     const hasDouble = line.slice(match.index ?? 0, (match.index ?? 0) + 18).includes("梅开二度");
@@ -214,7 +268,7 @@ function parseGoalEvents(
       needsReview: hasDouble
     };
     event.needsReview = eventNeedsReview(event);
-    events.push(event);
+    events.push(attribute(event));
 
     if (hasDouble) {
       uncertainItems.push({
@@ -228,7 +282,9 @@ function parseGoalEvents(
   for (const match of line.matchAll(/进球/g)) {
     const scorerRecord = nearestNameBefore(line, match.index ?? 0, players);
     if (!scorerRecord) continue;
-    const alreadyCovered = events.some((event) => event.scorer.rawName === scorerRecord.alias);
+    const rawText = fragment(line.lastIndexOf(scorerRecord.alias, match.index), (match.index ?? 0) + 2);
+    if (teams && isOwnGoalText(rawText)) continue;
+    const alreadyCovered = events.some((event) => event.type === "goal" && event.scorer.rawName === scorerRecord.alias);
     if (alreadyCovered) continue;
 
     const scorer = matchPlayer(scorerRecord.alias, players);
@@ -238,11 +294,11 @@ function parseGoalEvents(
       scorer,
       assist: null,
       count: 1,
-      rawText: `${scorerRecord.alias}进球`,
+      rawText,
       confidence: 0.82,
       needsReview: scorer.confidence < 0.75
     };
-    events.push(event);
+    events.push(attribute(event));
   }
 
   return { events, uncertainItems };
@@ -358,7 +414,8 @@ export function localParseMatch(input: {
       const { events, uncertainItems: lineUncertain } = parseGoalEvents(
         line,
         input.players,
-        input.teamAssignments
+        input.teamAssignments,
+        [teamA, teamB]
       );
       uncertainItems.push(...lineUncertain);
       const explicitScore = parseExplicitScore(line);

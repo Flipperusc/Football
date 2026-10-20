@@ -141,6 +141,8 @@ export const rosterParseRequestSchema = z.object({
 
 export const confirmRequestSchema = z.object({
   parsedJson: z.unknown(),
+  eventConfirmationToken: z.string().max(256).optional(),
+  matchDayVersion: z.string().datetime().optional(),
   teamAssignments: z.array(teamAssignmentInputSchema).optional(),
   manualTeamRanks: z
     .array(

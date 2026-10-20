@@ -1,5 +1,8 @@
 import type { PrismaClient } from "@prisma/client";
-import { parseResultSchema, type ParsedGoalEvent, type ParseResult } from "@/lib/ai/schemas";
+import { parseResultSchema, type ParseResult } from "@/lib/ai/schemas";
+import { getAdminCredentials } from "@/lib/admin-auth";
+import { inspectInternalEvents, type EventResolution } from "@/lib/match-events";
+import { createEventConfirmation, verifyEventConfirmation, EventConfirmationRequired, MatchDayChanged } from "@/lib/server/event-confirmation";
 import { calculateTeamResults, allocatePlayerMatchdayPoints } from "@/lib/stats/calculate";
 import { isBestDefenderAwardName } from "@/lib/stats/awards";
 import {
@@ -24,6 +27,8 @@ type ManualTeamRank = {
 type ConfirmInput = {
   matchDayId: string;
   parsedJson: unknown;
+  eventConfirmationToken?: string;
+  matchDayVersion?: string;
   teamAssignments?: {
     teamColor: TeamColor;
     playerId: string;
@@ -64,73 +69,6 @@ function collectMissingPlayers(parsed: ParseResult) {
   return events
     .filter((event) => !event.scorer.playerId || (event.assist && !event.assist.playerId))
     .map((event) => event.rawText);
-}
-
-const internalTeamLabels: Record<InternalTeamColor, string> = {
-  RED: "红队",
-  BLUE: "蓝队",
-  WHITE: "白队"
-};
-
-function resolveAuthoritativeInternalGoalTeams(
-  parsed: Extract<ParseResult, { matchType: "internal" }>,
-  assignments: TeamAssignmentInput[]
-) {
-  const assignedTeamByPlayerId = new Map(
-    assignments
-      .filter((assignment): assignment is TeamAssignmentInput & { teamColor: InternalTeamColor } =>
-        assignment.teamColor !== "EXTERNAL"
-      )
-      .map((assignment) => [assignment.playerId, assignment.teamColor])
-  );
-  const teamByEvent = new Map<ParsedGoalEvent, InternalTeamColor>();
-
-  for (const game of parsed.games) {
-    const teamA = colorToDb[game.teamA] as InternalTeamColor;
-    const teamB = colorToDb[game.teamB] as InternalTeamColor;
-    const knownGoals = new Map<InternalTeamColor, number>([[teamA, 0], [teamB, 0]]);
-
-    for (const event of game.events) {
-      const scorerId = event.scorer.playerId;
-      if (!scorerId) continue;
-      const scorerTeam = assignedTeamByPlayerId.get(scorerId);
-      const scorerName = event.scorer.matchedName || event.scorer.rawName || scorerId;
-      if (!scorerTeam) {
-        throw new Error(`进球球员“${scorerName}”不在本场红、蓝、白分队名单中，不能确认入库`);
-      }
-      if (scorerTeam !== teamA && scorerTeam !== teamB) {
-        throw new Error(
-          `进球球员“${scorerName}”属于${internalTeamLabels[scorerTeam]}，但第 ${game.sectionNo} 节没有该队，请修正节次或球员`
-        );
-      }
-
-      const assistId = event.assist?.playerId;
-      if (assistId) {
-        const assistTeam = assignedTeamByPlayerId.get(assistId);
-        const assistName = event.assist?.matchedName || event.assist?.rawName || assistId;
-        if (!assistTeam) {
-          throw new Error(`助攻球员“${assistName}”不在本场红、蓝、白分队名单中，不能确认入库`);
-        }
-        if (assistTeam !== scorerTeam) {
-          throw new Error(
-            `助攻球员“${assistName}”属于${internalTeamLabels[assistTeam]}，与进球球员“${scorerName}”不在同一队`
-          );
-        }
-      }
-
-      event.team = scorerTeam.toLowerCase() as "red" | "blue" | "white";
-      teamByEvent.set(event, scorerTeam);
-      knownGoals.set(scorerTeam, (knownGoals.get(scorerTeam) ?? 0) + event.count);
-    }
-
-    if ((knownGoals.get(teamA) ?? 0) > game.scoreA || (knownGoals.get(teamB) ?? 0) > game.scoreB) {
-      throw new Error(
-        `第 ${game.sectionNo} 节比分与按分队归属的进球不一致：${internalTeamLabels[teamA]} ${game.scoreA}，${internalTeamLabels[teamB]} ${game.scoreB}`
-      );
-    }
-  }
-
-  return teamByEvent;
 }
 
 function applyManualTeamRanks(
@@ -183,7 +121,7 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
   const calculatedTeamResults =
     parsed.matchType === "internal" ? calculateTeamResults(typedGames) : [];
   const needsManualRanking = calculatedTeamResults.some((result) => result.needsManualReview);
-  if (parsed.matchType === "internal" && needsManualRanking && !input.manualTeamRanks) {
+  if (parsed.matchType === "internal" && needsManualRanking && !input.manualTeamRanks && !parsed.games.some((game) => game.events.length)) {
     throw new TeamRankingConfirmationRequired(calculatedTeamResults);
   }
   const confirmedTeamResults =
@@ -197,6 +135,8 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
       include: { assignments: true }
     });
     if (!matchDay) throw new Error("比赛日不存在");
+    if (input.matchDayVersion && matchDay.updatedAt.toISOString() !== input.matchDayVersion) throw new MatchDayChanged();
+    if (matchDay.type.toLowerCase() !== parsed.matchType) throw new Error("比赛类型与确认内容不一致");
 
     const aliasesToSave = input.saveAliases ?? [];
     const aliasOwnerIds = [...new Set(aliasesToSave.map((alias) => alias.playerId))];
@@ -252,9 +192,21 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
       );
     }
 
-    const authoritativeInternalGoalTeams = parsed.matchType === "internal"
-      ? resolveAuthoritativeInternalGoalTeams(parsed, activeAssignments)
-      : new Map<ParsedGoalEvent, InternalTeamColor>();
+    const resolutionByKey = new Map<string, EventResolution>();
+    if (parsed.matchType === "internal") {
+      const inspection = inspectInternalEvents(parsed, activeAssignments);
+      if (inspection.issues.length) throw new Error(inspection.issues.join("；"));
+      const context = { matchDayId: input.matchDayId, updatedAt: matchDay.updatedAt, parsed, assignments: activeAssignments };
+      if (inspection.exceptions.length) {
+        const complete = inspection.exceptions.every((exception) => exception.team);
+        if (!complete || !verifyEventConfirmation(input.eventConfirmationToken, context)) {
+          throw new EventConfirmationRequired(inspection.exceptions, complete ? createEventConfirmation(context) : undefined);
+        }
+      }
+      if (needsManualRanking && !input.manualTeamRanks) throw new TeamRankingConfirmationRequired(calculatedTeamResults);
+      for (const resolution of inspection.resolutions) resolutionByKey.set(resolution.key, resolution);
+    }
+    const exceptionConfirmedAt = new Date();
 
     await tx.goalEvent.deleteMany({ where: { matchDayId: input.matchDayId } });
     await tx.playerMatchdayPoint.deleteMany({ where: { matchDayId: input.matchDayId } });
@@ -315,15 +267,23 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
       );
       const gameIdBySection = new Map(gameRows.map((game) => [game.sectionNo, game.id]));
 
-      for (const game of parsed.games) {
-        for (const event of game.events) {
+      for (const [gameIndex, game] of parsed.games.entries()) {
+        for (const [eventIndex, event] of game.events.entries()) {
           if (!event.scorer.playerId) continue;
+          const resolution = resolutionByKey.get(`${gameIndex}:${eventIndex}`)!;
+          event.team = resolution.teamColor.toLowerCase() as "red" | "blue" | "white";
+          event.needsTeamSelection = false;
           await tx.goalEvent.create({
             data: {
               matchDayId: input.matchDayId,
               internalGameId: gameIdBySection.get(game.sectionNo),
               matchType: "INTERNAL",
-              teamColor: authoritativeInternalGoalTeams.get(event),
+              teamColor: resolution.teamColor,
+              kind: event.type === "own_goal" ? "OWN_GOAL" : "NORMAL",
+              scorerRosterTeam: resolution.scorerRosterTeam,
+              assistRosterTeam: resolution.assistRosterTeam,
+              exceptionConfirmedAt: resolution.isException ? exceptionConfirmedAt : null,
+              exceptionConfirmedBy: resolution.isException ? getAdminCredentials().username : null,
               scorerId: event.scorer.playerId,
               assistPlayerId: event.assist?.playerId ?? null,
               count: event.count,
@@ -458,5 +418,5 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
         awards: true
       }
     });
-  });
+  }, { isolationLevel: "Serializable" });
 }

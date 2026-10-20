@@ -125,6 +125,7 @@ export async function loadSeasonStats(seasonId: string) {
       matchDayId: event.matchDayId,
       matchType: event.matchType,
       teamColor: event.teamColor,
+      kind: event.kind,
       scorerId: event.scorerId,
       assistPlayerId: event.assistPlayerId,
       count: event.count
