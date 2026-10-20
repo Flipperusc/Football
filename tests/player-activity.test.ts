@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { buildPlayerActivities } from "@/lib/stats/player-activity";
 
 describe("player activity timeline", () => {
+  it("shows an own goal as an event without a personal goal or assist increase", () => {
+    const rows = buildPlayerActivities([{ id: "m", date: "2026-10-19T00:00:00Z", type: "INTERNAL",
+      internalGames: [{ id: "g", sectionNo: 1 }], playerPoints: [],
+      goalEvents: [{ id: "own", internalGameId: "g", scorerId: "p1", assistPlayerId: "p2", kind: "OWN_GOAL", count: 1 }]
+    }], []);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: "OWN_GOAL", playerId: "p1", changeLabel: "不计个人进球和助攻" });
+    expect(rows[0].description).toContain("乌龙");
+  });
   it("builds goal, assist, point and manual adjustment reasons", () => {
     const rows = buildPlayerActivities(
       [

@@ -84,10 +84,18 @@ Prisma schema 位于 `prisma/schema.prisma`，完整迁移历史位于 `prisma/m
 3. 在“队内赛录入”录入红队、蓝队、白队阵容和赛后文本。
 4. 点击“保存并解析”，服务端调用 DeepSeek 解析 JSON。
 5. 在“AI 解析确认”页面检查比分、进球、助攻、球员匹配、低置信度和 `uncertainItems`。
-6. 必要时编辑 JSON，或把某个 `rawName` 保存为球员别名。
+6. 在表格中修改事件类型、得分队和球员，或把原文名字保存为球员别名。
 7. 点击“确认入库”，后端事务写入正式比赛数据。
 8. 在“榜单”查看射手榜、助攻榜、出勤榜、队内积分榜、门将榜和场均榜；门将榜按队内积分统计当前位置为“门将”的球员。
 9. 在球员详情页查看单人赛季数据和比赛记录。
+
+队内赛特殊事件：
+
+- 临时代打进球或助攻，选择本节实际得分队；入库前会集中弹出二次确认。
+- 乌龙球选择「乌龙球」及受益队，系统清空助攻；不计任何人的个人进球或助攻。
+- 当天名单中的临时未到场者仍获得出勤和原队排名积分。代打者的出勤只算一次，基础积分也按原队计算。
+- 取消确认保留表单且不修改正式数据；修改事件后须重新确认。得分队不明确时可在弹窗中补选。
+- 战报和球员记录保留代打、乌龙标记；重新入库替换旧事件，不重复累计。
 
 ## AI 解析
 
@@ -147,6 +155,7 @@ Prisma schema 位于 `prisma/schema.prisma`，完整迁移历史位于 `prisma/m
 ```bash
 pnpm test
 pnpm build
+pnpm test:e2e
 ```
 
 当前已覆盖：
@@ -156,6 +165,11 @@ pnpm build
 - 队伍排名对应个人赛季积分分配
 - 额外加分
 - 进球、助攻、出勤和场均统计
+- 临时代打、乌龙、二次确认凭证失效、取消及重新入库
+
+浏览器测试使用隔离数据库，不读取 `.env` 中的业务数据库地址或 DeepSeek Key。默认在 `.test-state/postgres` 启动本地 PostgreSQL（端口 55439）；Windows 默认寻找 PostgreSQL 18 和 Edge，也可用 `PG_BIN` 指定 PostgreSQL 工具目录。其他环境先执行 `pnpm exec playwright install chromium`。
+
+已有测试库时可设置 `E2E_DATABASE_URL`，仅接受本机、名称为 `football_e2e` 或 `football_e2e_*` 的数据库。测试启动时执行迁移，结束后删除本次测试数据；只有脚本自行启动的数据库会自动停止。CI 使用独立 PostgreSQL 服务运行同样的流程。
 
 ## 部署注意
 
@@ -164,4 +178,5 @@ pnpm build
 - 建议设置 `DEEPSEEK_ATTEMPT_TIMEOUT_MS="45000"` 和 `DEEPSEEK_MAX_TOKENS="4096"`。
 - nginx 反向代理应设置 `proxy_connect_timeout 10s`、`proxy_send_timeout 120s`、`proxy_read_timeout 120s`，确保应用约 90 秒内的重试或中文错误先返回。
 - 数据库迁移通过 `corepack pnpm prisma migrate deploy` 执行。
+- 本次上线须先应用 `20261019000000_match_event_exceptions`，再生成 Prisma Client、构建并重启应用。历史进球默认保持普通进球，原队快照和确认信息为空；不会自动改写历史事件性质。
 - 不要把 `.env` 提交到仓库。

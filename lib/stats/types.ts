@@ -30,6 +30,7 @@ export type TeamAssignmentInput = {
 };
 
 export type GoalEventInput = {
+  kind?: "NORMAL" | "OWN_GOAL";
   matchDayId: string;
   matchType: MatchType;
   teamColor?: TeamColor | null;

@@ -7,6 +7,7 @@ import { App, Alert, Button, Empty, Spin, Tag } from "antd";
 import { ArrowLeft, Download, RefreshCw, Share2, Trophy } from "lucide-react";
 import { toPng } from "html-to-image";
 import { requestJson } from "@/lib/client-types";
+import { goalEventMarker, type StoredGoalAttribution } from "@/lib/match-events";
 
 type TeamColor = "RED" | "BLUE" | "WHITE" | "EXTERNAL";
 type InternalTeamColor = Exclude<TeamColor, "EXTERNAL">;
@@ -25,7 +26,7 @@ type ShareMatchDay = {
     scoreA: number;
     scoreB: number;
   }[];
-  goalEvents: {
+  goalEvents: (StoredGoalAttribution & {
     id: string;
     internalGameId?: string | null;
     teamColor?: TeamColor | null;
@@ -34,7 +35,7 @@ type ShareMatchDay = {
     count: number;
     scorer: { id: string; name: string };
     assistPlayer?: { id: string; name: string } | null;
-  }[];
+  })[];
   teamResults: {
     teamColor: InternalTeamColor;
     matchPoints: number;
@@ -75,7 +76,7 @@ function goalsText(
   const text = mergeNameCounts(
     events
       .filter((event) => event.internalGameId === game.id && event.teamColor === teamColor)
-      .map((event) => ({ name: event.scorer.name, count: event.count }))
+      .map((event) => ({ name: event.scorer.name + goalEventMarker(event, game), count: event.count }))
   );
   return text || (score === 0 ? "0" : String(score));
 }
@@ -88,8 +89,8 @@ function assistsText(
   if (teamScore(game, teamColor) === null) return "—";
   return mergeNameCounts(
     events
-      .filter((event) => event.internalGameId === game.id && event.teamColor === teamColor && event.assistPlayer)
-      .map((event) => ({ name: event.assistPlayer!.name, count: event.count }))
+      .filter((event) => event.kind !== "OWN_GOAL" && event.internalGameId === game.id && event.teamColor === teamColor && event.assistPlayer)
+      .map((event) => ({ name: event.assistPlayer!.name + goalEventMarker(event, game, "assist"), count: event.count }))
   ) || "—";
 }
 
@@ -263,7 +264,10 @@ export default function MatchDaySharePage() {
                     </tr>
                   </tbody>
                 </table>
-                <div className="share-footer-note">数据由灵眸GPU球队数据中心生成</div>
+                <div className="share-footer-note">
+                  {matchDay.goalEvents.some((event) => event.kind === "OWN_GOAL") ? "乌龙球计入得分队比分，不计个人进球和助攻。" : ""}
+                  数据由灵眸GPU球队数据中心生成
+                </div>
               </div>
             </div>
           </>

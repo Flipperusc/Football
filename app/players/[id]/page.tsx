@@ -6,6 +6,8 @@ import { Descriptions, Empty, Select, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { Player, PlayerStats, Season } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
+import { goalEventMarker, type StoredGoalAttribution } from "@/lib/match-events";
+import type { TeamColor } from "@/lib/stats/types";
 
 type PlayerDetail = {
   player: Player;
@@ -15,13 +17,14 @@ type PlayerDetail = {
     date: string;
     type: "INTERNAL" | "EXTERNAL";
     parseStatus: string;
-    goalEvents: {
+    goalEvents: (StoredGoalAttribution & {
       id: string;
       count: number;
       rawText?: string;
       scorerId: string;
       assistPlayerId?: string | null;
-    }[];
+      internalGame?: { sectionNo: number; teamA: TeamColor; teamB: TeamColor } | null;
+    })[];
     playerPoints: {
       totalPoints: number;
       basePoints: number;
@@ -70,7 +73,21 @@ export default function PlayerDetailPage() {
       dataIndex: "type",
       render: (type: string) => (type === "INTERNAL" ? "队内赛" : "队外赛")
     },
-    { title: "进球/助攻事件", render: (_, row) => row.goalEvents.length },
+    {
+      title: "进球/助攻明细",
+      render: (_, row) => row.goalEvents.length ? <Space direction="vertical" size={4}>
+        {row.goalEvents.map((event) => {
+          const role = event.scorerId === params.id ? "scorer" : "assist";
+          const ownGoal = event.kind === "OWN_GOAL";
+          return <span key={event.id}>
+            {event.internalGame ? `第 ${event.internalGame.sectionNo} 节：` : ""}
+            {ownGoal ? "乌龙球" : role === "scorer" ? "进球" : "助攻"} ×{event.count}
+            {goalEventMarker(event, event.internalGame, role)}
+            {ownGoal ? "，不计个人进球和助攻" : ""}
+          </span>;
+        })}
+      </Space> : "—"
+    },
     {
       title: "积分",
       render: (_, row) => row.playerPoints[0]?.totalPoints ?? "-"

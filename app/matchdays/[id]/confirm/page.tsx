@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   Alert,
@@ -21,6 +21,8 @@ import type { ColumnsType } from "antd/es/table";
 import { ArrowLeft, Plus, Save, Trash2 } from "lucide-react";
 import type { MatchDay, Player } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
+import { defaultEventTeam, inspectInternalEvents, type EventException } from "@/lib/match-events";
+import { MatchEventConfirmationModal } from "@/components/MatchEventConfirmationModal";
 
 type AiTeamColor = "red" | "blue" | "white" | "external";
 
@@ -33,9 +35,10 @@ type PlayerRef = {
 };
 
 type ParsedEvent = {
-  type: "goal";
+  type: "goal" | "own_goal";
   rawText: string;
   team?: AiTeamColor;
+  needsTeamSelection?: boolean;
   scorer: PlayerRef;
   assist?: PlayerRef | null;
   count: number;
@@ -144,35 +147,15 @@ function assignedTeamForPlayer(matchDay: MatchDay, playerId: string | null | und
   return undefined;
 }
 
-function applyAuthoritativeTeams(parsed: ParsedMatch, matchDay: MatchDay) {
+function restoreEventTeams(parsed: ParsedMatch, matchDay: MatchDay) {
   const next = cloneParsed(parsed);
   if (next.matchType !== "internal") return next;
-
   for (const game of next.games ?? []) {
     for (const event of game.events) {
-      const scorerTeam = assignedTeamForPlayer(matchDay, event.scorer.playerId);
-      const assistTeam = event.assist
-        ? assignedTeamForPlayer(matchDay, event.assist.playerId)
-        : scorerTeam;
-      event.team = scorerTeam;
-      event.needsReview = event.needsReview
-        || (scorerTeam !== game.teamA && scorerTeam !== game.teamB)
-        || Boolean(event.assist && assistTeam !== scorerTeam);
-    }
-
-    const goalsA = game.events
-      .filter((event) => event.team === game.teamA)
-      .reduce((sum, event) => sum + event.count, 0);
-    const goalsB = game.events
-      .filter((event) => event.team === game.teamB)
-      .reduce((sum, event) => sum + event.count, 0);
-    const currentScoresFit = goalsA <= game.scoreA && goalsB <= game.scoreB;
-    const swappedScoresFit = goalsA <= game.scoreB && goalsB <= game.scoreA;
-    if (!currentScoresFit && swappedScoresFit) {
-      [game.scoreA, game.scoreB] = [game.scoreB, game.scoreA];
+      if (event.team && event.team !== game.teamA && event.team !== game.teamB) event.team = undefined;
+      if (!event.team && !event.needsTeamSelection) event.team = defaultEventTeam(event, game, matchDay.assignments ?? []);
     }
   }
-
   return next;
 }
 
@@ -219,6 +202,10 @@ export default function ConfirmMatchDayPage() {
   const [parsed, setParsed] = useState<ParsedMatch | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const submitting = useRef(false);
+  const [pendingEventConfirmation, setPendingEventConfirmation] = useState<{ confirmationToken?: string } | null>(null);
+  const [eventConfirmationToken, setEventConfirmationToken] = useState<string>();
+  const [confirmationError, setConfirmationError] = useState<string>();
   const [pendingTeamResults, setPendingTeamResults] = useState<TeamRankingPreview[]>([]);
   const [manualTeamRanks, setManualTeamRanks] = useState<Record<InternalTeamColor, number>>({
     RED: 1,
@@ -249,7 +236,7 @@ export default function ConfirmMatchDayPage() {
       setMatchDay(matchRow);
       setPlayers(playerRows);
       const parsedResult = (matchRow.parseResults?.[0]?.parsedJson ?? null) as ParsedMatch | null;
-      setParsed(parsedResult ? applyAuthoritativeTeams(parsedResult, matchRow) : null);
+      setParsed(parsedResult ? restoreEventTeams(parsedResult, matchRow) : null);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "加载解析结果失败");
     } finally {
@@ -281,6 +268,10 @@ export default function ConfirmMatchDayPage() {
     }));
   }, [parsed]);
 
+  const eventInspection = useMemo(() => parsed?.matchType === "internal" && matchDay
+    ? inspectInternalEvents({ games: parsed.games ?? [] }, matchDay.assignments ?? [])
+    : { issues: [], exceptions: [], resolutions: [] }, [parsed, matchDay]);
+
   const awardRows = useMemo<AwardRow[]>(() =>
     (parsed?.awards ?? []).flatMap((award, awardIndex) => {
       if (award.players.length === 0) {
@@ -305,6 +296,11 @@ export default function ConfirmMatchDayPage() {
   );
 
   function updateParsed(mutator: (next: ParsedMatch) => void) {
+    if (submitting.current) return;
+    setEventConfirmationToken(undefined);
+    setPendingTeamResults([]);
+    setConfirmationError(undefined);
+    setPendingEventConfirmation((current) => current ? {} : null);
     setParsed((current) => {
       if (!current) return current;
       const next = cloneParsed(current);
@@ -449,40 +445,7 @@ export default function ConfirmMatchDayPage() {
     if (events.some((event) => !event.scorer.playerId)) {
       return "仍有进球球员没有匹配，请先在表格里选择球员";
     }
-    if (parsed.matchType === "internal" && matchDay) {
-      for (const game of parsed.games ?? []) {
-        let goalsA = 0;
-        let goalsB = 0;
-        for (const event of game.events) {
-          const scorerTeam = assignedTeamForPlayer(matchDay, event.scorer.playerId);
-          const scorerName = event.scorer.matchedName || event.scorer.rawName || "未知球员";
-          if (!scorerTeam) {
-            return `进球球员“${scorerName}”尚未分配到红、蓝、白队，请返回录入页修正分队`;
-          }
-          if (scorerTeam !== game.teamA && scorerTeam !== game.teamB) {
-            return `进球球员“${scorerName}”属于${teamLabels[scorerTeam]}，但第 ${game.sectionNo} 节没有该队`;
-          }
-          if (event.team !== scorerTeam) {
-            return `进球球员“${scorerName}”的进球队伍必须为${teamLabels[scorerTeam]}`;
-          }
-          if (event.assist?.playerId) {
-            const assistTeam = assignedTeamForPlayer(matchDay, event.assist.playerId);
-            const assistName = event.assist.matchedName || event.assist.rawName || "未知球员";
-            if (!assistTeam) {
-              return `助攻球员“${assistName}”尚未分配到红、蓝、白队，请返回录入页修正分队`;
-            }
-            if (assistTeam !== scorerTeam) {
-              return `助攻球员“${assistName}”与进球球员“${scorerName}”不在同一队`;
-            }
-          }
-          if (scorerTeam === game.teamA) goalsA += event.count;
-          if (scorerTeam === game.teamB) goalsB += event.count;
-        }
-        if (goalsA > game.scoreA || goalsB > game.scoreB) {
-          return `第 ${game.sectionNo} 节比分与按分队归属的进球不一致，请检查比分`;
-        }
-      }
-    }
+    if (eventInspection.issues.length) return eventInspection.issues[0];
     if ((parsed.awards ?? []).some((award) => award.players.length === 0 || award.players.some((player) => !player.playerId))) {
       return "仍有奖项球员没有匹配，请先在奖项表里选择球员";
     }
@@ -498,57 +461,62 @@ export default function ConfirmMatchDayPage() {
     router.push(`${entryPath}?edit=${params.id}`);
   }
 
-  async function confirm(ranks?: ManualTeamRank[]) {
+  async function confirm(ranks?: ManualTeamRank[], confirmationToken?: string, approveExceptions = false) {
+    if (submitting.current) return;
     const error = validateBeforeConfirm();
-    if (error) {
-      message.error(error);
-      return;
-    }
+    if (error) { message.error(error); return; }
     if (ranks && new Set(ranks.map((row) => row.rank)).size !== 3) {
       message.error("第 1、2、3 名不能重复");
       return;
     }
-
+    submitting.current = true;
     setSaving(true);
+    setConfirmationError(undefined);
     try {
-      const response = await fetch(`/api/matchdays/${params.id}/confirm`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          parsedJson: parsed,
-          saveAliases: aliasDrafts,
-          manualTeamRanks: ranks
-        })
-      });
-      const payload = (await response.json().catch(() => ({}))) as {
-        code?: string;
-        message?: string;
-        teamResults?: TeamRankingPreview[];
-      };
-
-      if (
-        response.status === 409 &&
-        payload.code === "TEAM_RANKING_CONFIRMATION_REQUIRED" &&
-        payload.teamResults?.length === 3
-      ) {
-        setPendingTeamResults(payload.teamResults);
-        setManualTeamRanks(
-          Object.fromEntries(
-            payload.teamResults.map((result) => [result.teamColor, result.rank ?? 3])
-          ) as Record<InternalTeamColor, number>
-        );
+      let token = confirmationToken;
+      // A dialog edit needs a new proof for exactly the content the operator just approved.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const response = await fetch(`/api/matchdays/${params.id}/confirm`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ parsedJson: parsed, matchDayVersion: matchDay?.updatedAt,
+            eventConfirmationToken: token, saveAliases: aliasDrafts, manualTeamRanks: ranks })
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          code?: string; message?: string; teamResults?: TeamRankingPreview[];
+          exceptions?: EventException[]; confirmationToken?: string;
+        };
+        if (response.status === 409 && payload.code === "MATCH_EVENT_CONFIRMATION_REQUIRED") {
+          setPendingEventConfirmation({ confirmationToken: payload.confirmationToken });
+          setPendingTeamResults([]);
+          setEventConfirmationToken(undefined);
+          if (approveExceptions && attempt === 0 && payload.confirmationToken
+            && JSON.stringify(payload.exceptions) === JSON.stringify(eventInspection.exceptions)) {
+            token = payload.confirmationToken;
+            continue;
+          }
+          return;
+        }
+        if (response.status === 409 && payload.code === "TEAM_RANKING_CONFIRMATION_REQUIRED" && payload.teamResults?.length === 3) {
+          setPendingEventConfirmation(null);
+          setEventConfirmationToken(token);
+          setPendingTeamResults(payload.teamResults);
+          setManualTeamRanks(Object.fromEntries(payload.teamResults.map((result) => [result.teamColor, result.rank ?? 3])) as Record<InternalTeamColor, number>);
+          return;
+        }
+        if (!response.ok) throw new Error(payload.message ?? `确认失败：${response.status}`);
+        setPendingTeamResults([]);
+        setPendingEventConfirmation(null);
+        setEventConfirmationToken(undefined);
+        message.success(matchDay?.parseStatus === "CONFIRMED" ? "修改已保存并重新入库" : "已确认入库");
+        router.push(`/matchdays/${params.id}/share`);
         return;
       }
-      if (!response.ok) {
-        throw new Error(payload.message ?? `确认失败：${response.status}`);
-      }
-
-      setPendingTeamResults([]);
-      message.success(matchDay?.parseStatus === "CONFIRMED" ? "修改已保存并重新入库" : "已确认入库");
-      router.push(`/matchdays/${params.id}/share`);
     } catch (submitError) {
-      message.error(submitError instanceof Error ? submitError.message : "确认失败");
+      const text = submitError instanceof Error ? submitError.message : "确认失败";
+      setConfirmationError(text);
+      message.error(text);
     } finally {
+      submitting.current = false;
       setSaving(false);
     }
   }
@@ -597,103 +565,97 @@ export default function ConfirmMatchDayPage() {
     }
   ];
 
+  const eventLabel = (row: EventRow, field: string) => "第" + (row.sectionNo ?? 0) + "节事件" + (row.eventIndex + 1) + field;
   const eventColumns: ColumnsType<EventRow> = [
     {
-      title: "节次",
-      width: 100,
-      render: (_, row) =>
-        parsed?.matchType === "internal" ? (
-          <Select
-            style={{ width: 82 }}
-            value={row.sectionNo}
-            options={(parsed.games ?? []).map((game) => ({ label: `第 ${game.sectionNo} 节`, value: game.sectionNo }))}
-            onChange={(sectionNo) => moveEvent(row, sectionNo)}
-          />
-        ) : (
-          "-"
-        )
+      title: "事件类型", width: 125,
+      render: (_, row) => parsed?.matchType === "internal" ? (
+        <Select aria-label={eventLabel(row, "类型")} style={{ width: 110 }} value={row.type} disabled={saving}
+          options={[{ label: "普通进球", value: "goal" }, { label: "乌龙球", value: "own_goal" }]}
+          onChange={(type: ParsedEvent["type"]) => {
+            const game = parsed.games?.[row.gameIndex ?? -1];
+            const team = game && row.team ? (row.team === game.teamA ? game.teamB : game.teamA) : row.team;
+            if (type === "own_goal" && row.assist) message.info("乌龙球不计助攻，已清空该事件的助攻球员");
+            updateEvent(row, { type, team, assist: type === "own_goal" ? null : row.assist, needsReview: true });
+          }} />
+      ) : "普通进球"
     },
     {
-      title: "进球队伍",
-      width: 120,
+      title: "节次", width: 100,
+      render: (_, row) => parsed?.matchType === "internal" ? (
+        <Select aria-label={eventLabel(row, "节次")} style={{ width: 82 }} value={row.sectionNo} disabled={saving}
+          options={(parsed.games ?? []).map((game) => ({ label: "第 " + game.sectionNo + " 节", value: game.sectionNo }))}
+          onChange={(sectionNo) => moveEvent(row, sectionNo)} />
+      ) : "-"
+    },
+    {
+      title: "得分队伍", width: 145,
       render: (_, row) => {
-        const team = parsed?.matchType === "internal" && matchDay
-          ? assignedTeamForPlayer(matchDay, row.scorer.playerId)
-          : "external";
-        return (
-          <Tag color={team === "red" ? "red" : team === "blue" ? "blue" : undefined}>
-            {team ? teamLabels[team] : "未分队"}
-          </Tag>
-        );
+        const game = parsed?.games?.[row.gameIndex ?? -1];
+        if (parsed?.matchType !== "internal" || !game) return <Tag>队外</Tag>;
+        const exceptional = eventInspection.exceptions.some((item) => item.key === row.gameIndex + ":" + row.eventIndex);
+        return <Space direction="vertical" size={4}>
+          <Select aria-label={eventLabel(row, "得分队")} style={{ width: 110 }} disabled={saving}
+            value={row.team} placeholder="选择得分队" status={!row.team ? "warning" : undefined}
+            options={[game.teamA, game.teamB].map((value) => ({ label: teamLabels[value], value }))}
+            onChange={(team) => updateEvent(row, { team, needsTeamSelection: false, needsReview: true })} />
+          {exceptional ? <Tag color="gold">需二次确认</Tag> : null}
+        </Space>;
       }
     },
     {
-      title: "进球球员",
-      width: 180,
-      render: (_, row) => (
-        <Select
-          showSearch
-          optionFilterProp="label"
-          style={{ width: 160 }}
-          value={row.scorer.playerId ?? undefined}
-          options={playerOptions}
-          status={!row.scorer.playerId ? "error" : undefined}
-          onChange={(playerId) => {
-            const team = matchDay ? assignedTeamForPlayer(matchDay, playerId) : undefined;
-            updateEvent(row, {
-              scorer: playerRefFromId(playerId, players, row.scorer.rawName),
-              team: parsed?.matchType === "internal" ? team : "external",
-              needsReview: parsed?.matchType === "internal" ? !team : false
-            });
-          }}
-        />
-      )
+      title: "进球／乌龙球员", width: 180,
+      render: (_, row) => {
+        const originalTeam = matchDay ? assignedTeamForPlayer(matchDay, row.scorer.playerId) : undefined;
+        return <Space direction="vertical" size={4}>
+          <Select aria-label={eventLabel(row, "球员")} showSearch optionFilterProp="label" style={{ width: 160 }}
+            disabled={saving} value={row.scorer.playerId ?? undefined} options={playerOptions}
+            status={!row.scorer.playerId ? "error" : undefined}
+            onChange={(playerId) => {
+              const game = parsed?.games?.[row.gameIndex ?? -1];
+              const scorer = playerRefFromId(playerId, players, row.scorer.rawName);
+              const team = game && matchDay
+                ? row.team ?? (row.needsTeamSelection ? undefined : defaultEventTeam({ ...row, scorer }, game, matchDay.assignments ?? []))
+                : "external";
+              updateEvent(row, { scorer, team, needsReview: true });
+            }} />
+          {parsed?.matchType === "internal" ? <Typography.Text type="secondary">
+            {row.type === "own_goal" ? "乌龙球员 · " : ""}当天{originalTeam ? teamLabels[originalTeam] : "未分队"}
+          </Typography.Text> : null}
+        </Space>;
+      }
     },
     {
-      title: "助攻球员",
-      width: 180,
-      render: (_, row) => (
-        <Select
-          allowClear
-          showSearch
-          optionFilterProp="label"
-          style={{ width: 160 }}
-          value={row.assist?.playerId ?? undefined}
-          options={playerOptions}
-          onChange={(playerId) =>
-            updateEvent(row, {
-              assist: playerId ? playerRefFromId(playerId, players, row.assist?.rawName) : null
-            })
-          }
-        />
-      )
+      title: "助攻球员", width: 180,
+      render: (_, row) => {
+        const originalTeam = matchDay ? assignedTeamForPlayer(matchDay, row.assist?.playerId) : undefined;
+        return <Space direction="vertical" size={4}>
+          <Select aria-label={eventLabel(row, "助攻")} allowClear showSearch optionFilterProp="label" style={{ width: 160 }}
+            value={row.assist?.playerId ?? undefined} options={playerOptions} disabled={saving || row.type === "own_goal"}
+            placeholder={row.type === "own_goal" ? "乌龙球不计助攻" : "无助攻"}
+            onChange={(playerId) => updateEvent(row, { assist: playerId ? playerRefFromId(playerId, players, row.assist?.rawName) : null })} />
+          {row.assist && parsed?.matchType === "internal" ? <Typography.Text type="secondary">当天{originalTeam ? teamLabels[originalTeam] : "未分队"}</Typography.Text> : null}
+        </Space>;
+      }
     },
     {
-      title: "数量",
-      width: 90,
-      render: (_, row) => (
-        <InputNumber min={1} value={row.count} onChange={(count) => updateEvent(row, { count: count ?? 1 })} />
-      )
+      title: "数量", width: 90,
+      render: (_, row) => <InputNumber aria-label={eventLabel(row, "数量")} min={1} precision={0} value={row.count} disabled={saving}
+        onChange={(count) => updateEvent(row, { count: count ?? 1 })} />
     },
     {
-      title: "需复核",
-      width: 90,
-      render: (_, row) => (
-        <Checkbox checked={row.needsReview} onChange={(event) => updateEvent(row, { needsReview: event.target.checked })} />
-      )
+      title: "需复核", width: 90,
+      render: (_, row) => <Checkbox aria-label={eventLabel(row, "需复核")} checked={row.needsReview} disabled={saving}
+        onChange={(event) => updateEvent(row, { needsReview: event.target.checked })} />
     },
     {
       title: "原文",
-      render: (_, row) => (
-        <Input value={row.rawText} onChange={(event) => updateEvent(row, { rawText: event.target.value })} />
-      )
+      render: (_, row) => <Input aria-label={eventLabel(row, "原文")} value={row.rawText} disabled={saving}
+        onChange={(event) => updateEvent(row, { rawText: event.target.value })} />
     },
     {
-      title: "操作",
-      width: 80,
-      render: (_, row) => (
-        <Button danger icon={<Trash2 size={16} />} onClick={() => deleteEvent(row)} />
-      )
+      title: "操作", width: 80,
+      render: (_, row) => <Button aria-label={eventLabel(row, "删除")} danger icon={<Trash2 size={16} />} disabled={saving} onClick={() => deleteEvent(row)} />
     }
   ];
 
@@ -794,13 +756,15 @@ export default function ConfirmMatchDayPage() {
           <Button icon={<ArrowLeft size={16} />} onClick={returnToEdit} disabled={!matchDay}>
             返回修改
           </Button>
-          <Button type="primary" icon={<Save size={16} />} onClick={() => void confirm()} loading={saving}>
+          <Button type="primary" icon={<Save size={16} />} onClick={() => void confirm()} loading={saving} disabled={loading || !parsed}>
             {isEditingConfirmed ? "保存修改并重新入库" : "确认入库"}
           </Button>
         </Space>
       </div>
 
       {loadError ? <Alert type="error" showIcon message="加载失败" description={loadError} style={{ marginBottom: 16 }} /> : null}
+
+      {confirmationError && !pendingEventConfirmation ? <Alert type="error" showIcon message={confirmationError} style={{ marginBottom: 16 }} /> : null}
 
       {isEditingConfirmed ? (
         <Alert
@@ -854,6 +818,7 @@ export default function ConfirmMatchDayPage() {
             columns={gameColumns}
             dataSource={parsed.games ?? []}
             pagination={false}
+            scroll={{ x: 850 }}
           />
         </div>
       ) : null}
@@ -863,7 +828,7 @@ export default function ConfirmMatchDayPage() {
           <Typography.Title level={4} style={{ margin: 0 }}>
             进球与助攻
           </Typography.Title>
-          <Button icon={<Plus size={16} />} onClick={addEvent}>
+          <Button icon={<Plus size={16} />} onClick={addEvent} disabled={loading || !parsed || saving}>
             新增进球
           </Button>
         </div>
@@ -871,12 +836,12 @@ export default function ConfirmMatchDayPage() {
           <Alert
             type="info"
             showIcon
-            message="进球队伍由分队自动确定"
-            description="赛后文本只识别进球球员、助攻和比分，不会修改球员分队；选择进球球员后，系统会自动使用该球员在本场的分队。"
+            message="临时代打与乌龙球将在入库前再次确认"
+            description="按实际情况选择得分队和事件类型。出勤与排名积分仍按当天名单计算，临时未到场者照常计入；乌龙球不计个人进球和助攻。"
             style={{ marginBottom: 16 }}
           />
         ) : null}
-        <Table rowKey="key" loading={loading} columns={eventColumns} dataSource={eventRows} pagination={false} scroll={{ x: 1100 }} />
+        <Table rowKey="key" loading={loading} columns={eventColumns} dataSource={eventRows} pagination={false} scroll={{ x: 1350 }} />
       </div>
 
       <div className="section-panel">
@@ -962,6 +927,14 @@ export default function ConfirmMatchDayPage() {
           ))}
         </Space>
       </div>
+      <MatchEventConfirmationModal open={pendingEventConfirmation !== null} exceptions={eventInspection.exceptions}
+        issues={eventInspection.issues} saving={saving} error={confirmationError}
+        onCancel={() => { if (!saving) { setPendingEventConfirmation(null); setEventConfirmationToken(undefined); } }}
+        onTeamChange={(event, team) => {
+          const row = eventRows.find((item) => item.gameIndex === event.gameIndex && item.eventIndex === event.eventIndex);
+          if (row) updateEvent(row, { team, needsTeamSelection: false, needsReview: true });
+        }}
+        onConfirm={() => void confirm(undefined, pendingEventConfirmation?.confirmationToken, true)} />
       <Modal
         title="人工确认三队排名"
         open={pendingTeamResults.length === 3}
@@ -977,7 +950,7 @@ export default function ConfirmMatchDayPage() {
             (["RED", "BLUE", "WHITE"] as InternalTeamColor[]).map((teamColor) => ({
               teamColor,
               rank: manualTeamRanks[teamColor]
-            }))
+            })), eventConfirmationToken
           )
         }
       >

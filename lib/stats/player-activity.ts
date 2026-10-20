@@ -11,7 +11,7 @@ export type PlayerActivity = {
   occurredAt: string;
   description: string;
   changeLabel: string;
-  kind: "GOAL" | "ASSIST" | "POINT" | "MANUAL";
+  kind: "GOAL" | "OWN_GOAL" | "ASSIST" | "POINT" | "MANUAL";
 };
 
 type MatchActivityInput = {
@@ -20,6 +20,7 @@ type MatchActivityInput = {
   type: "INTERNAL" | "EXTERNAL";
   internalGames: { id: string; sectionNo: number }[];
   goalEvents: {
+    kind?: "NORMAL" | "OWN_GOAL";
     id: string;
     internalGameId?: string | null;
     scorerId: string;
@@ -97,6 +98,11 @@ export function buildPlayerActivities(
       const context = `${dateLabel}${matchLabel}${sectionText(
         event.internalGameId ? sections.get(event.internalGameId) : undefined
       )}`;
+      if (event.kind === "OWN_GOAL") {
+        rows.push({ id: `own-goal-${event.id}`, playerId: event.scorerId, occurredAt: matchOccurredAt,
+          description: `${context}发生${event.count}次乌龙球`, changeLabel: "不计个人进球和助攻", kind: "OWN_GOAL" });
+        continue;
+      }
       rows.push({
         id: `goal-${event.id}`,
         playerId: event.scorerId,

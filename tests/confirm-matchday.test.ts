@@ -17,7 +17,7 @@ describe("confirmMatchDay identity preflight", () => {
     };
     const tx = {
       matchDay: {
-        findUnique: vi.fn().mockResolvedValue({ id: "match-1", assignments: [] })
+        findUnique: vi.fn().mockResolvedValue({ id: "match-1", type: "EXTERNAL", assignments: [] })
       },
       player: {
         findMany: vi
@@ -94,13 +94,14 @@ describe("confirmMatchDay identity preflight", () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it("writes the scorer roster team instead of a conflicting parsed team", async () => {
+  it("writes a normal roster goal without an exception confirmation", async () => {
     const goalCreate = vi.fn().mockResolvedValue({ id: "goal-1" });
     const tx = {
       matchDay: {
         findUnique: vi.fn().mockResolvedValue({
           id: "match-1",
           rawText: "第一节 1:0 甲进球",
+          type: "INTERNAL",
           assignments: [{ matchDayId: "match-1", playerId: "player-1", teamColor: "WHITE" }]
         }),
         update: vi.fn().mockResolvedValue({ id: "match-1" })
@@ -136,7 +137,7 @@ describe("confirmMatchDay identity preflight", () => {
             events: [
               {
                 type: "goal",
-                team: "blue",
+                team: "white",
                 scorer: { rawName: "甲", playerId: "player-1", confidence: 1, candidates: [] },
                 assist: null,
                 count: 1,
@@ -177,6 +178,7 @@ describe("confirmMatchDay identity preflight", () => {
       matchDay: {
         findUnique: vi.fn().mockResolvedValue({
           id: "match-1",
+          type: "INTERNAL",
           assignments: [
             { matchDayId: "match-1", playerId: "scorer-1", teamColor: "WHITE" },
             { matchDayId: "match-1", playerId: "assist-1", teamColor: "RED" }
@@ -232,7 +234,7 @@ describe("confirmMatchDay identity preflight", () => {
           { teamColor: "BLUE", rank: 3 }
         ]
       })
-    ).rejects.toThrow("不在同一队");
+    ).rejects.toMatchObject({ code: "MATCH_EVENT_CONFIRMATION_REQUIRED" });
 
     expect(formalDeletes.goalEvent).not.toHaveBeenCalled();
     expect(formalDeletes.internalGame).not.toHaveBeenCalled();

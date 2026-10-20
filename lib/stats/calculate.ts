@@ -173,6 +173,7 @@ export function calculateSeasonPlayerStats(input: {
   awards?: AwardInput[];
 }): PlayerSeasonStats[] {
   const matchTypeById = new Map(input.matchDays.map((matchDay) => [matchDay.id, matchDay.type]));
+  const scoringEvents = input.goalEvents.filter((event) => event.kind !== "OWN_GOAL");
 
   return input.players.map((player) => {
     const internalAppearanceDays = new Set(
@@ -196,16 +197,16 @@ export function calculateSeasonPlayerStats(input: {
         .map((assignment) => assignment.matchDayId)
     );
 
-    const internalEvents = input.goalEvents.filter(
+    const internalEvents = scoringEvents.filter(
       (event) => event.matchType === "INTERNAL" && event.scorerId === player.id
     );
-    const externalEvents = input.goalEvents.filter(
+    const externalEvents = scoringEvents.filter(
       (event) => event.matchType === "EXTERNAL" && event.scorerId === player.id
     );
-    const internalAssistEvents = input.goalEvents.filter(
+    const internalAssistEvents = scoringEvents.filter(
       (event) => event.matchType === "INTERNAL" && event.assistPlayerId === player.id
     );
-    const externalAssistEvents = input.goalEvents.filter(
+    const externalAssistEvents = scoringEvents.filter(
       (event) => event.matchType === "EXTERNAL" && event.assistPlayerId === player.id
     );
 
