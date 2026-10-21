@@ -1,3 +1,5 @@
+import { assertParticipantCorrections } from "@/lib/server/participant-corrections";
+import { apiErrorResponse } from "@/lib/server/api-error";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { matchDayCreateSchema } from "@/lib/validations";
@@ -12,6 +14,7 @@ export async function GET(request: Request) {
       type: type ?? undefined
     },
     include: {
+      trialPlayers: true,
       season: true,
       assignments: { include: { player: true } },
       teamResults: true,
@@ -23,6 +26,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  try {
   const body = matchDayCreateSchema.parse(await request.json());
   if (
     body.type === "INTERNAL" &&
@@ -33,12 +37,16 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  if (body.type === "EXTERNAL" && body.trialPlayers.length) return NextResponse.json({ message: "队外赛不支持试训身份" }, { status: 400 });
+  await assertParticipantCorrections(prisma, body.participantCorrections, body.assignments, body.type);
   const matchDay = await prisma.matchDay.create({
     data: {
       seasonId: body.seasonId,
       date: body.date,
       type: body.type,
       rawText: body.rawText,
+      participantCorrections: body.participantCorrections,
+      trialPlayers: { create: body.trialPlayers },
       assignments: body.assignments.length
         ? {
             create: body.assignments
@@ -47,8 +55,10 @@ export async function POST(request: Request) {
     },
     include: {
       assignments: { include: { player: true } },
+      trialPlayers: true,
       season: true
     }
   });
   return NextResponse.json(matchDay, { status: 201 });
+  } catch (error) { return apiErrorResponse(error, "创建比赛日失败"); }
 }

@@ -7,6 +7,8 @@ import { Plus, Send, Upload, Wand2, UsersRound } from "lucide-react";
 import type { MatchDay, Player, Season } from "@/lib/client-types";
 import { getRequestErrorMessage, requestJson } from "@/lib/client-types";
 import { useElapsedSeconds } from "@/lib/use-elapsed-seconds";
+import { TrialPlayersPanel } from "@/components/TrialPlayersPanel";
+import { mergePendingTrials, retainRosterCorrections, type TrialDraft } from "@/lib/trial-players";
 
 type TeamColor = "RED" | "BLUE" | "WHITE" | "EXTERNAL";
 type InternalTeamColor = Exclude<TeamColor, "EXTERNAL">;
@@ -16,6 +18,7 @@ type Assignment = {
   playerId: string;
   role: "PLAYER" | "GOALKEEPER";
   isCaptain: boolean;
+  pointsEligible?: boolean;
 };
 
 type FormValues = {
@@ -96,6 +99,8 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
   const [recognizeWarning, setRecognizeWarning] = useState<string>();
   const [recognizeError, setRecognizeError] = useState<string>();
   const [rosterText, setRosterText] = useState("");
+  const [trialPlayers, setTrialPlayers] = useState<TrialDraft[]>([]);
+  const [participantCorrections, setParticipantCorrections] = useState<{ rawName: string; playerId: string }[]>([]);
   const [externalRosterText, setExternalRosterText] = useState("");
   const [teamPlayers, setTeamPlayers] = useState<Record<InternalTeamColor, string[]>>({
     RED: [],
@@ -146,6 +151,8 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
         });
 
         if (type === "INTERNAL") {
+          setTrialPlayers(matchRow.trialPlayers ?? []);
+          setParticipantCorrections(matchRow.participantCorrections ?? []);
           const nextTeamPlayers: Record<InternalTeamColor, string[]> = { RED: [], BLUE: [], WHITE: [] };
           const nextGoalkeepers: Record<InternalTeamColor, string | undefined> = {
             RED: undefined,
@@ -186,14 +193,16 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
           teamColor,
           playerId,
           role: "PLAYER",
-          isCaptain: false
+          isCaptain: false,
+          pointsEligible: true
         }));
       if (keeper) {
         rows.push({
           teamColor,
           playerId: keeper,
           role: "GOALKEEPER",
-          isCaptain: false
+          isCaptain: false,
+          pointsEligible: true
         });
       }
       return rows;
@@ -273,10 +282,11 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
       WHITE: undefined
     };
     const recognizedPlayerIds = new Set<string>();
+    setTrialPlayers((current) => mergePendingTrials(current, result.parsed.assignments.filter((row) => isInternalTeam(row.teamColor)), () => crypto.randomUUID()));
 
     for (const row of result.parsed.assignments) {
       if (
-        !row.playerId ||
+        !row.playerId || row.needsReview ||
         !isInternalTeam(row.teamColor) ||
         recognizedPlayerIds.has(row.playerId)
       ) {
@@ -322,7 +332,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
 
     const uncertainCount = result.parsed.uncertainItems.length;
     if (uncertainCount > 0) {
-      setRecognizeWarning(`有 ${uncertainCount} 项没有高置信度匹配，请检查球员名单和别名。`);
+      setRecognizeWarning(`有 ${uncertainCount} 项需要核对。未匹配或模糊匹配的名字已列入试训待确认，请确认身份或匹配正式球员。`);
     }
     message.success(`${sourceLabel} 已识别 ${recognizedPlayerIds.size} 名球员`);
   }
@@ -411,6 +421,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
 
   async function submit(values: FormValues) {
     const assignments = type === "INTERNAL" ? internalAssignments() : externalAssignments(values);
+    const retainedCorrections = retainRosterCorrections(participantCorrections, assignments);
     if (type === "INTERNAL" && assignments.length === 0) {
       message.error("请先填写红队、蓝队、白队球员，否则无法给球员分配第一名/第二名/第三名积分");
       return;
@@ -429,7 +440,8 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
               date: values.date,
               rawText: values.rawText,
               parseStatus: "PENDING",
-              assignments
+              assignments,
+              ...(type === "INTERNAL" ? { trialPlayers, participantCorrections: retainedCorrections } : {})
             })
           })
         : await requestJson<{ id: string }>("/api/matchdays", {
@@ -439,11 +451,13 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
               date: values.date,
               type,
               rawText: values.rawText,
-              assignments
+              assignments,
+              ...(type === "INTERNAL" ? { trialPlayers, participantCorrections: retainedCorrections } : {})
             })
           });
 
       savedMatchDayId = matchDay.id;
+      setParticipantCorrections(retainedCorrections);
       setEditingMatchDayId(matchDay.id);
       setEditingConfirmedMatch(false);
       setParseFailed(false);
@@ -660,6 +674,16 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
               </div>
             </div>
           ))}
+          <TrialPlayersPanel trials={trialPlayers} players={players} disabled={submitting || recognizing}
+            onChange={setTrialPlayers} onRemove={(id) => setTrialPlayers((current) => current.filter((trial) => trial.id !== id))}
+            onResolve={(trialId, playerId, team) => {
+              const trial = trialPlayers.find((item) => item.id === trialId);
+              if (trial) setParticipantCorrections((current) => [...current.filter((row) => row.rawName !== trial.name), { rawName: trial.name, playerId }]);
+              const assigned = internalAssignments().some((row) => row.playerId === playerId);
+              if (!assigned) setTeamPlayers((current) => ({ ...current, [team]: unique([...current[team], playerId]) }));
+              setTrialPlayers((current) => current.filter((trial) => trial.id !== trialId));
+              message.success("已匹配正式球员，请核对当天分队");
+            }} />
         </Space>
       ) : (
         <>

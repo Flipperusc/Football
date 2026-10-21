@@ -27,6 +27,7 @@ export type TeamAssignmentInput = {
   matchDayId: string;
   teamColor: TeamColor;
   playerId: string;
+  pointsEligible?: boolean;
 };
 
 export type GoalEventInput = {
@@ -34,7 +35,7 @@ export type GoalEventInput = {
   matchDayId: string;
   matchType: MatchType;
   teamColor?: TeamColor | null;
-  scorerId: string;
+  scorerId: string | null;
   assistPlayerId?: string | null;
   count: number;
 };
@@ -76,6 +77,7 @@ export type PlayerSeasonStats = {
   name: string;
   position?: string | null;
   internalGoals: number;
+  internalOwnGoals: number;
   internalAssists: number;
   internalAppearances: number;
   internalSeasonPoints: number;

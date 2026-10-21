@@ -1,5 +1,9 @@
-import type { PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import { parseResultSchema, type ParseResult } from "@/lib/ai/schemas";
+import { unusedParticipantCorrections } from "@/lib/ai/participant-corrections";
+import { teamAssignmentInputSchema, trialPlayersInputSchema, participantCorrectionsSchema } from "@/lib/validations";
+import { assertTrialPlayerScope, replaceTrialPlayers } from "@/lib/server/trial-players";
+import type { TrialParticipant } from "@/lib/match-events";
 import { getAdminCredentials } from "@/lib/admin-auth";
 import { inspectInternalEvents, type EventResolution } from "@/lib/match-events";
 import { createEventConfirmation, verifyEventConfirmation, EventConfirmationRequired, MatchDayChanged } from "@/lib/server/event-confirmation";
@@ -29,11 +33,13 @@ type ConfirmInput = {
   parsedJson: unknown;
   eventConfirmationToken?: string;
   matchDayVersion?: string;
+  trialPlayers?: TrialParticipant[];
   teamAssignments?: {
     teamColor: TeamColor;
     playerId: string;
     role?: "PLAYER" | "GOALKEEPER";
     isCaptain?: boolean;
+    pointsEligible?: boolean;
   }[];
   manualTeamRanks?: ManualTeamRank[];
   saveAliases?: {
@@ -67,7 +73,7 @@ function awardPointsForStorage(name: string, points: number) {
 function collectMissingPlayers(parsed: ParseResult) {
   const events = parsed.matchType === "internal" ? parsed.games.flatMap((game) => game.events) : parsed.events;
   return events
-    .filter((event) => !event.scorer.playerId || (event.assist && !event.assist.playerId))
+    .filter((event) => !(event.scorer.playerId || (parsed.matchType === "internal" && event.scorer.trialPlayerId)) || (event.assist && !(event.assist.playerId || (parsed.matchType === "internal" && event.assist.trialPlayerId))))
     .map((event) => event.rawText);
 }
 
@@ -102,6 +108,7 @@ function applyManualTeamRanks(
 
 export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput) {
   const parsed = parseResultSchema.parse(input.parsedJson);
+  if (parsed.awards.some((award) => award.players.some((person) => person.trialPlayerId)) || parsed.bonusPoints.some((bonus) => bonus.player.trialPlayerId)) throw new Error("试训球员不参与正式个人奖项或额外积分");
   const missingPlayers = collectMissingPlayers(parsed);
   if (missingPlayers.length > 0) {
     throw new Error(`仍有未匹配球员，不能确认入库：${missingPlayers.join("、")}`);
@@ -132,12 +139,17 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
   return prisma.$transaction(async (tx) => {
     const matchDay = await tx.matchDay.findUnique({
       where: { id: input.matchDayId },
-      include: { assignments: true }
+      include: { assignments: true, trialPlayers: true }
     });
     if (!matchDay) throw new Error("比赛日不存在");
     if (input.matchDayVersion && matchDay.updatedAt.toISOString() !== input.matchDayVersion) throw new MatchDayChanged();
     if (matchDay.type.toLowerCase() !== parsed.matchType) throw new Error("比赛类型与确认内容不一致");
 
+    const requestedAssignments = input.teamAssignments ?? (Array.isArray(matchDay.draftAssignments) ? teamAssignmentInputSchema.array().parse(matchDay.draftAssignments) : undefined);
+    const requestedTrials = input.trialPlayers ?? (Array.isArray(matchDay.draftTrialPlayers) ? trialPlayersInputSchema.parse(matchDay.draftTrialPlayers) : undefined);
+    const trialPlayers = requestedTrials === undefined ? matchDay.trialPlayers ?? [] : trialPlayersInputSchema.parse(requestedTrials);
+    if (parsed.matchType === "external" && trialPlayers.length) throw new Error("队外赛不支持试训身份");
+    if (requestedTrials) await assertTrialPlayerScope(tx, input.matchDayId, trialPlayers);
     const aliasesToSave = input.saveAliases ?? [];
     const aliasOwnerIds = [...new Set(aliasesToSave.map((alias) => alias.playerId))];
     const aliasOwners = aliasOwnerIds.length
@@ -171,16 +183,18 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
       );
     }
 
-    const activeAssignments = input.teamAssignments
-      ? input.teamAssignments.map((assignment) => ({
+    const activeAssignments = requestedAssignments
+      ? requestedAssignments.map((assignment) => ({
           matchDayId: input.matchDayId,
           teamColor: assignment.teamColor,
-          playerId: assignment.playerId
+          playerId: assignment.playerId,
+          pointsEligible: true
         }))
       : matchDay.assignments.map((assignment) => ({
           matchDayId: assignment.matchDayId,
           teamColor: assignment.teamColor,
-          playerId: assignment.playerId
+          playerId: assignment.playerId,
+          pointsEligible: true
         }));
 
     if (
@@ -194,10 +208,10 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
 
     const resolutionByKey = new Map<string, EventResolution>();
     if (parsed.matchType === "internal") {
-      const inspection = inspectInternalEvents(parsed, activeAssignments);
+      const inspection = inspectInternalEvents(parsed, activeAssignments, trialPlayers);
       if (inspection.issues.length) throw new Error(inspection.issues.join("；"));
-      const context = { matchDayId: input.matchDayId, updatedAt: matchDay.updatedAt, parsed, assignments: activeAssignments };
-      if (inspection.exceptions.length) {
+      const context = { matchDayId: input.matchDayId, updatedAt: matchDay.updatedAt, parsed, assignments: activeAssignments, trialPlayers };
+      if (inspection.exceptions.length || trialPlayers.length || (requestedTrials && (matchDay.trialPlayers ?? []).length) || input.eventConfirmationToken) {
         const complete = inspection.exceptions.every((exception) => exception.team);
         if (!complete || !verifyEventConfirmation(input.eventConfirmationToken, context)) {
           throw new EventConfirmationRequired(inspection.exceptions, complete ? createEventConfirmation(context) : undefined);
@@ -214,16 +228,19 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
     await tx.award.deleteMany({ where: { matchDayId: input.matchDayId } });
     await tx.internalGame.deleteMany({ where: { matchDayId: input.matchDayId } });
 
-    if (input.teamAssignments) {
+    if (requestedTrials) await replaceTrialPlayers(tx, input.matchDayId, trialPlayers);
+
+    if (requestedAssignments) {
       await tx.teamAssignment.deleteMany({ where: { matchDayId: input.matchDayId } });
-      if (input.teamAssignments.length > 0) {
+      if (requestedAssignments.length > 0) {
         await tx.teamAssignment.createMany({
-          data: input.teamAssignments.map((assignment) => ({
+          data: requestedAssignments.map((assignment) => ({
             matchDayId: input.matchDayId,
             teamColor: assignment.teamColor,
             playerId: assignment.playerId,
             role: assignment.role ?? "PLAYER",
-            isCaptain: assignment.isCaptain ?? false
+            isCaptain: assignment.isCaptain ?? false,
+            pointsEligible: true
           })),
           skipDuplicates: true
         });
@@ -269,7 +286,7 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
 
       for (const [gameIndex, game] of parsed.games.entries()) {
         for (const [eventIndex, event] of game.events.entries()) {
-          if (!event.scorer.playerId) continue;
+          if (!event.scorer.playerId && !event.scorer.trialPlayerId) continue;
           const resolution = resolutionByKey.get(`${gameIndex}:${eventIndex}`)!;
           event.team = resolution.teamColor.toLowerCase() as "red" | "blue" | "white";
           event.needsTeamSelection = false;
@@ -285,6 +302,8 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
               exceptionConfirmedAt: resolution.isException ? exceptionConfirmedAt : null,
               exceptionConfirmedBy: resolution.isException ? getAdminCredentials().username : null,
               scorerId: event.scorer.playerId,
+              scorerTrialPlayerId: event.scorer.trialPlayerId ?? null,
+              assistTrialPlayerId: event.assist?.trialPlayerId ?? null,
               assistPlayerId: event.assist?.playerId ?? null,
               count: event.count,
               rawText: event.rawText,
@@ -407,9 +426,13 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
       where: { id: input.matchDayId },
       data: {
         parseStatus: "CONFIRMED",
+        participantCorrections: unusedParticipantCorrections(parsed, Array.isArray(matchDay.participantCorrections) ? participantCorrectionsSchema.parse(matchDay.participantCorrections) : []),
+        draftAssignments: Prisma.DbNull,
+        draftTrialPlayers: Prisma.DbNull,
         confirmedAt: new Date()
       },
       include: {
+        trialPlayers: true,
         assignments: { include: { player: true } },
         internalGames: true,
         goalEvents: true,

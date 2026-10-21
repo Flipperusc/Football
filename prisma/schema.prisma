@@ -122,10 +122,14 @@ model MatchDay {
   date           DateTime
   type           MatchType
   rawText        String?
+  participantCorrections Json?
+  draftAssignments Json?
+  draftTrialPlayers Json?
   parseStatus    ParseStatus           @default(PENDING)
   confirmedAt    DateTime?
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
+  trialPlayers   TrialPlayer[]
   assignments    TeamAssignment[]
   internalGames  InternalGame[]
   goalEvents     GoalEvent[]
@@ -146,6 +150,7 @@ model TeamAssignment {
   player     Player         @relation(fields: [playerId], references: [id], onDelete: Cascade)
   role       AssignmentRole @default(PLAYER)
   isCaptain  Boolean        @default(false)
+  pointsEligible Boolean    @default(true)
 
   @@unique([matchDayId, playerId])
   @@index([matchDayId, teamColor])
@@ -179,10 +184,14 @@ model GoalEvent {
   assistRosterTeam TeamColor?
   exceptionConfirmedAt DateTime?
   exceptionConfirmedBy String?
-  scorerId       String
-  scorer         Player        @relation("ScorerEvents", fields: [scorerId], references: [id], onDelete: Restrict)
+  scorerId       String?
+  scorer         Player?       @relation("ScorerEvents", fields: [scorerId], references: [id], onDelete: Restrict)
   assistPlayerId String?
   assistPlayer   Player?       @relation("AssistEvents", fields: [assistPlayerId], references: [id], onDelete: SetNull)
+  scorerTrialPlayerId String?
+  scorerTrialPlayer TrialPlayer? @relation("TrialScorerEvents", fields: [scorerTrialPlayerId], references: [id], onDelete: Restrict)
+  assistTrialPlayerId String?
+  assistTrialPlayer TrialPlayer? @relation("TrialAssistEvents", fields: [assistTrialPlayerId], references: [id], onDelete: Restrict)
   count          Int           @default(1)
   rawText        String?
   needsReview    Boolean       @default(false)
@@ -280,4 +289,15 @@ model TeamSetting {
   logoUrl   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model TrialPlayer {
+  id String @id
+  matchDayId String
+  matchDay MatchDay @relation(fields: [matchDayId], references: [id], onDelete: Cascade)
+  name String
+  confirmed Boolean @default(false)
+  goals GoalEvent[] @relation("TrialScorerEvents")
+  assists GoalEvent[] @relation("TrialAssistEvents")
+  @@index([matchDayId])
 }

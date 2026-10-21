@@ -1,3 +1,5 @@
+import type { TrialParticipant } from "@/lib/match-events";
+import { isTrialLabel } from "./automatic-trials";
 import { z } from "zod";
 import { parseResultSchema, type MatchedPlayer, type ParseResult, type ParsedGoalEvent } from "./schemas";
 import { localParseMatch, type ParserAssignment, type ParserPlayer } from "./local-parser";
@@ -9,6 +11,7 @@ export type AiParseInput = {
   matchType: "INTERNAL" | "EXTERNAL";
   players: ParserPlayer[];
   teamAssignments: ParserAssignment[];
+  trialPlayers?: TrialParticipant[];
 };
 
 export type AiParseOutput = {
@@ -95,6 +98,7 @@ function buildPrompt(input: AiParseInput) {
     "If the text says 最佳后卫 followed by one or more player names, including formats such as 最佳后卫：欧巴，果子林, put it in awards with name 最佳后卫, points 0, and all playerNames. Concatenated names can represent multiple known players, for example 最佳后卫欧巴果子林 means 欧巴 and 果之林 each receive one award count.",
     "Use the known player list only to recognize names and aliases. Keep names as text from the input.",
     `Match type: ${input.matchType}`,
+    `Trial names (not formal players; no roster; preserve their event names): ${JSON.stringify(input.trialPlayers ?? [])}`,
     `Known players: ${JSON.stringify(players)}`,
     `Team assignments: ${JSON.stringify(input.teamAssignments)}`,
     `Post-match text:\n${input.rawText}`
@@ -434,10 +438,17 @@ function alignScoresWithAssignedGoals(game: CleanGame, events: ParsedGoalEvent[]
   return { scoreA, scoreB };
 }
 
+function matchEventParticipant(name: string, input: AiParseInput): MatchedPlayer {
+  const matches = input.matchType === "INTERNAL" ? (input.trialPlayers ?? []).filter((trial) => normalizeKey(trial.name) === normalizeKey(name)) : [];
+  if (matches.length === 1) return { rawName: name, playerId: null, trialPlayerId: matches[0].id, matchedName: matches[0].name, confidence: 1, candidates: [] };
+  if (input.matchType === "INTERNAL" && isTrialLabel(name)) return { rawName: name, playerId: null, confidence: 0, candidates: [] };
+  return matchPlayer(name, input.players);
+}
+
 function parsedGoal(goal: CleanGoal, input: AiParseInput, game?: CleanGame): ParsedGoalEvent {
-  const scorer = matchPlayer(goal.scorerName, input.players);
+  const scorer = matchEventParticipant(goal.scorerName, input);
   const ownGoal = input.matchType === "INTERNAL" && goal.type === "own_goal";
-  const assist = !ownGoal && goal.assistName ? matchPlayer(goal.assistName, input.players) : null;
+  const assist = !ownGoal && goal.assistName ? matchEventParticipant(goal.assistName, input) : null;
   const attribution = game ? parseEventAttribution({ rawText: goal.rawText, ownGoal,
     rosterTeam: assignmentTeam(scorer.playerId, input.teamAssignments), teamA: game.teamA, teamB: game.teamB,
     suggestedTeam: goal.team, guestHint: goal.isGuest }) : undefined;

@@ -18,6 +18,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
       eventConfirmationToken: body.eventConfirmationToken,
       matchDayVersion: body.matchDayVersion,
       teamAssignments: body.teamAssignments,
+      trialPlayers: body.trialPlayers,
       manualTeamRanks: body.manualTeamRanks,
       saveAliases: body.saveAliases
     });

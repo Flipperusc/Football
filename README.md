@@ -97,6 +97,14 @@ Prisma schema 位于 `prisma/schema.prisma`，完整迁移历史位于 `prisma/m
 - 取消确认保留表单且不修改正式数据；修改事件后须重新确认。得分队不明确时可在弹窗中补选。
 - 战报和球员记录保留代打、乌龙标记；重新入库替换旧事件，不重复累计。
 
+试训与计分资格：
+
+- 分队识别未匹配或模糊匹配的名字列入“试训待确认”；管理员可确认试训身份，或匹配正式球员。试训区仅展示姓名及进球、助攻、乌龙对应节次。
+- 试训人员不进入正式赛季榜单，但事件比分正常影响团队积分与排名；配合的正式球员进球或助攻正常计算。
+- 乌龙球在独立区域录入，无助攻；正式球员详情新增独立乌龙数，普通进球统计不变。
+- 正式球员均按当天原队排名正常计分，不再提供本场积分资格开关。“特殊积分与奖项”集中录入奖项和额外加分；保存新别名位于试训球员区域上方。
+- 修改已确认比赛的阵容与试训身份先保留为草稿，确认成功后才替换正式记录；重新解析不会清除旧统计。
+
 ## AI 解析
 
 服务端模块位于 `lib/ai/deepseek.ts`。
@@ -171,6 +179,8 @@ pnpm test:e2e
 
 已有测试库时可设置 `E2E_DATABASE_URL`，仅接受本机、名称为 `football_e2e` 或 `football_e2e_*` 的数据库。测试启动时执行迁移，结束后删除本次测试数据；只有脚本自行启动的数据库会自动停止。CI 使用独立 PostgreSQL 服务运行同样的流程。
 
+本机资源不足时，可先执行 `corepack pnpm build`，再设置 `E2E_USE_BUILD=1` 运行端到端测试，复用生产构建减少实时编译开销。该模式在隔离测试中显式转发真实登录响应的 Cookie，以支持本机 HTTP API 请求；应用的生产 Secure Cookie 设置不变。
+
 ## 部署注意
 
 - 生产环境必须配置 PostgreSQL `DATABASE_URL`。
@@ -178,5 +188,5 @@ pnpm test:e2e
 - 建议设置 `DEEPSEEK_ATTEMPT_TIMEOUT_MS="45000"` 和 `DEEPSEEK_MAX_TOKENS="4096"`。
 - nginx 反向代理应设置 `proxy_connect_timeout 10s`、`proxy_send_timeout 120s`、`proxy_read_timeout 120s`，确保应用约 90 秒内的重试或中文错误先返回。
 - 数据库迁移通过 `corepack pnpm prisma migrate deploy` 执行。
-- 本次上线须先应用 `20261019000000_match_event_exceptions`，再生成 Prisma Client、构建并重启应用。历史进球默认保持普通进球，原队快照和确认信息为空；不会自动改写历史事件性质。
+- 本次上线须应用全部待执行迁移，包括 `20261019000000_match_event_exceptions`、`20261021000000_trial_players_points` 和 `20261021010000_retire_points_eligibility`，再生成 Prisma Client、构建并重启应用。最后一项迁移恢复曾被取消的正式球员积分，按最后正式确认的加分和已保存奖项计算，不使用编辑草稿。历史进球性质保持不变。
 - 不要把 `.env` 提交到仓库。

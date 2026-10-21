@@ -16,7 +16,10 @@ export type Season = {
   status: "ACTIVE" | "ENDED";
 };
 
+export type TrialPlayer = { id: string; name: string; confirmed: boolean; matchDayId?: string };
+
 export type MatchDay = {
+  participantCorrections?: { rawName: string; playerId: string }[];
   id: string;
   updatedAt?: string;
   seasonId: string;
@@ -25,12 +28,14 @@ export type MatchDay = {
   rawText?: string | null;
   parseStatus: "PENDING" | "PARSED" | "CONFIRMED" | "FAILED";
   season?: Season;
+  trialPlayers?: TrialPlayer[];
   assignments?: {
     id: string;
     teamColor: "RED" | "BLUE" | "WHITE" | "EXTERNAL";
     playerId: string;
     role: "PLAYER" | "GOALKEEPER";
     isCaptain: boolean;
+    pointsEligible?: boolean;
     player?: Player;
   }[];
   parseResults?: {
@@ -48,6 +53,7 @@ export type PlayerStats = {
   position?: string | null;
   avatarUrl?: string | null;
   internalGoals: number;
+  internalOwnGoals: number;
   internalAssists: number;
   internalAppearances: number;
   internalSeasonPoints: number;

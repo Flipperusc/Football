@@ -37,6 +37,8 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
             assistPlayerId: true,
             count: true,
             scorer: { select: { id: true, name: true } },
+            scorerTrialPlayer: { select: { id: true, name: true } },
+            assistTrialPlayer: { select: { id: true, name: true } },
             assistPlayer: { select: { id: true, name: true } }
           }
         },

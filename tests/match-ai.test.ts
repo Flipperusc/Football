@@ -71,8 +71,11 @@ describe("post-match AI parsing", () => {
 
   it.each(["，", " ", ""])("does not give an unknown player's own goal to the previous scorer (separator: %j)", (separator) => {
     const parsed = expectInternalParsed(localParseMatch({ rawText: `第一节白蓝1:1宇哥进球${separator}小明乌龙，蓝队得分`, matchType: "INTERNAL", players, teamAssignments }));
-    expect(parsed.games[0].events).toEqual([expect.objectContaining({ type: "goal", team: "white", scorer: expect.objectContaining({ playerId: "p1" }) })]);
-    expect(parsed.uncertainItems).toEqual(expect.arrayContaining([expect.objectContaining({ rawText: expect.stringContaining("小明乌龙"), reason: expect.stringContaining("乌龙球球员未识别") })]));
+    expect(parsed.games[0].events).toHaveLength(2);
+    expect(parsed.games[0].events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "goal", team: "white", scorer: expect.objectContaining({ playerId: "p1" }) }),
+      expect.objectContaining({ type: "own_goal", scorer: expect.objectContaining({ playerId: null, rawName: "小明" }) })
+    ]));
   });
 
   it("preserves explicit AI guest goals and own goals without swapping the score", async () => {

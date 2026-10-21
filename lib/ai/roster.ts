@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isTrialLabel } from "./automatic-trials";
 import type { ParserPlayer } from "./local-parser";
 import { isDeepSeekConfigured, requestDeepSeekJson } from "./deepseek-client";
 
@@ -151,6 +152,7 @@ function uniqueCandidates(candidates: { playerId: string; name: string; confiden
 }
 
 function matchRawName(rawName: string, players: ParserPlayer[]) {
+  if (isTrialLabel(rawName)) return { playerId: null, matchedName: null, confidence: 0, candidates: [] };
   const value = normalize(rawName);
   const records = recordsFor(players);
   const exact = records.find((record) => record.alias === value);

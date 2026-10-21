@@ -1,13 +1,14 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { getAdminSessionToken } from "@/lib/admin-auth";
 import type { ParseResult } from "@/lib/ai/schemas";
-import type { EventAssignment, EventException } from "@/lib/match-events";
+import type { EventAssignment, EventException, TrialParticipant } from "@/lib/match-events";
 
 type ConfirmationContext = {
   matchDayId: string;
   updatedAt: Date;
   parsed: ParseResult;
   assignments: EventAssignment[];
+  trialPlayers?: TrialParticipant[];
 };
 
 function signature(issuedAt: string, context: ConfirmationContext) {
@@ -15,7 +16,8 @@ function signature(issuedAt: string, context: ConfirmationContext) {
     .sort((a, b) => a.playerId.localeCompare(b.playerId));
   return createHmac("sha256", getAdminSessionToken()).update(JSON.stringify({
     purpose: "match-event-confirmation-v1", issuedAt,
-    matchDayId: context.matchDayId, updatedAt: context.updatedAt, parsed: context.parsed, assignments
+    matchDayId: context.matchDayId, updatedAt: context.updatedAt, parsed: context.parsed, assignments,
+    trialPlayers: (context.trialPlayers ?? []).map(({ id, name, confirmed }) => ({ id, name, confirmed })).sort((a, b) => a.id.localeCompare(b.id))
   })).digest("hex");
 }
 
@@ -38,7 +40,7 @@ export class EventConfirmationRequired extends Error {
   readonly code = "MATCH_EVENT_CONFIRMATION_REQUIRED";
 
   constructor(readonly exceptions: EventException[], readonly confirmationToken?: string) {
-    super("请复核临时代打或乌龙球，确认统计影响后继续入库");
+    super("请复核试训身份及特殊事件，确认统计影响后继续入库");
     this.name = "EventConfirmationRequired";
   }
 }
