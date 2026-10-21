@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { Descriptions, Empty, Select, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -21,7 +21,7 @@ type PlayerDetail = {
       id: string;
       count: number;
       rawText?: string;
-      scorerId: string;
+      scorerId: string | null;
       assistPlayerId?: string | null;
       internalGame?: { sectionNo: number; teamA: TeamColor; teamB: TeamColor } | null;
     })[];
@@ -39,11 +39,14 @@ export default function PlayerDetailPage() {
   const [seasonId, setSeasonId] = useState<string>();
   const [detail, setDetail] = useState<PlayerDetail>();
   const [loading, setLoading] = useState(false);
+  const latestLoad = useRef(0);
 
   async function load(nextSeasonId?: string) {
+    const requestId = ++latestLoad.current;
     setLoading(true);
     try {
       const seasonRows = seasons.length ? seasons : await requestJson<Season[]>("/api/seasons");
+      if (requestId !== latestLoad.current) return;
       if (!seasons.length) setSeasons(seasonRows);
       const id =
         nextSeasonId ??
@@ -52,18 +55,20 @@ export default function PlayerDetailPage() {
         seasonRows[0]?.id;
       setSeasonId(id);
       if (id) {
-        setDetail(await requestJson<PlayerDetail>(`/api/stats/season/${id}/player/${params.id}`));
+        const result = await requestJson<PlayerDetail>(`/api/stats/season/${id}/player/${params.id}`);
+        if (requestId === latestLoad.current) setDetail(result);
       } else {
         const player = await requestJson<Player>(`/api/players/${params.id}`);
-        setDetail({ player, matchRecords: [] });
+        if (requestId === latestLoad.current) setDetail({ player, matchRecords: [] });
       }
     } finally {
-      setLoading(false);
+      if (requestId === latestLoad.current) setLoading(false);
     }
   }
 
   useEffect(() => {
     void load();
+    return () => { latestLoad.current += 1; };
   }, [params.id]);
 
   const columns: ColumnsType<PlayerDetail["matchRecords"][number]> = [
@@ -75,18 +80,27 @@ export default function PlayerDetailPage() {
     },
     {
       title: "进球/助攻明细",
-      render: (_, row) => row.goalEvents.length ? <Space direction="vertical" size={4}>
-        {row.goalEvents.map((event) => {
+      render: (_, row) => row.goalEvents.some((event) => event.kind !== "OWN_GOAL") ? <Space direction="vertical" size={4}>
+        {row.goalEvents.filter((event) => event.kind !== "OWN_GOAL").map((event) => {
           const role = event.scorerId === params.id ? "scorer" : "assist";
-          const ownGoal = event.kind === "OWN_GOAL";
           return <span key={event.id}>
             {event.internalGame ? `第 ${event.internalGame.sectionNo} 节：` : ""}
-            {ownGoal ? "乌龙球" : role === "scorer" ? "进球" : "助攻"} ×{event.count}
+            {role === "scorer" ? "进球" : "助攻"} ×{event.count}
             {goalEventMarker(event, event.internalGame, role)}
-            {ownGoal ? "，不计个人进球和助攻" : ""}
           </span>;
         })}
       </Space> : "—"
+    },
+    {
+      title: "乌龙球",
+      render: (_, row) => {
+        const events = row.goalEvents.filter((event) => event.kind === "OWN_GOAL" && event.scorerId === params.id);
+        if (!events.length) return "—";
+        return <Space direction="vertical" size={4}>
+          <span>共 {events.reduce((sum, event) => sum + event.count, 0)} 个</span>
+          {events.map((event) => <span key={event.id}>{event.internalGame ? `第 ${event.internalGame.sectionNo} 节：` : ""}乌龙 ×{event.count}{goalEventMarker(event, event.internalGame)}</span>)}
+        </Space>;
+      }
     },
     {
       title: "积分",
@@ -112,7 +126,7 @@ export default function PlayerDetailPage() {
       <div className="page-title">
         <div>
           <h1>{detail?.player.name ?? "球员详情"}</h1>
-          <p>基础信息、本赛季数据、历史比赛记录、进球和助攻明细</p>
+          <p>基础信息、本赛季数据、历史比赛记录、进球、助攻和乌龙明细</p>
         </div>
         <Select
           style={{ width: 240 }}
@@ -157,6 +171,10 @@ export default function PlayerDetailPage() {
           <strong>{detail?.stats?.totalAppearances ?? 0}</strong>
         </div>
         <div className="metric-card">
+          <span>队内乌龙球</span>
+          <strong>{detail?.stats?.internalOwnGoals ?? 0}</strong>
+        </div>
+        <div className="metric-card">
           <span>队内积分</span>
           <strong>{detail?.stats?.internalSeasonPoints ?? 0}</strong>
         </div>
@@ -167,6 +185,7 @@ export default function PlayerDetailPage() {
           rowKey="id"
           loading={loading}
           columns={columns}
+          scroll={{ x: 780 }}
           dataSource={detail?.matchRecords ?? []}
         />
       </div>

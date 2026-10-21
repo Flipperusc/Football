@@ -117,7 +117,8 @@ export async function loadSeasonStats(seasonId: string) {
     matchDay.assignments.map((assignment) => ({
       matchDayId: assignment.matchDayId,
       teamColor: assignment.teamColor,
-      playerId: assignment.playerId
+      playerId: assignment.playerId,
+      pointsEligible: assignment.pointsEligible
     }))
   );
   const goalEvents: GoalEventInput[] = matchDays.flatMap((matchDay) =>

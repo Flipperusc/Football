@@ -23,7 +23,7 @@ type MatchActivityInput = {
     kind?: "NORMAL" | "OWN_GOAL";
     id: string;
     internalGameId?: string | null;
-    scorerId: string;
+    scorerId: string | null;
     assistPlayerId?: string | null;
     count: number;
   }[];
@@ -99,11 +99,11 @@ export function buildPlayerActivities(
         event.internalGameId ? sections.get(event.internalGameId) : undefined
       )}`;
       if (event.kind === "OWN_GOAL") {
-        rows.push({ id: `own-goal-${event.id}`, playerId: event.scorerId, occurredAt: matchOccurredAt,
+        if (event.scorerId) rows.push({ id: `own-goal-${event.id}`, playerId: event.scorerId, occurredAt: matchOccurredAt,
           description: `${context}发生${event.count}次乌龙球`, changeLabel: "不计个人进球和助攻", kind: "OWN_GOAL" });
         continue;
       }
-      rows.push({
+      if (event.scorerId) rows.push({
         id: `goal-${event.id}`,
         playerId: event.scorerId,
         occurredAt: matchOccurredAt,

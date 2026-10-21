@@ -1,3 +1,4 @@
+import type { TrialParticipant } from "@/lib/match-events";
 import type { ParseResult, ParsedGoalEvent } from "./schemas";
 import type { InternalTeam } from "@/lib/match-events";
 import { isOwnGoalText, parseEventAttribution } from "./event-attribution";
@@ -6,6 +7,7 @@ export type ParserPlayer = {
   id: string;
   name: string;
   aliases: { alias: string; aliasType?: string }[];
+  trialPlayerId?: string;
 };
 
 export type ParserAssignment = {
@@ -60,14 +62,15 @@ function matchPlayer(rawName: string, players: ParserPlayer[]) {
   if (exact) {
     return {
       rawName,
-      playerId: exact.player.id,
+      playerId: exact.player.trialPlayerId ? null : exact.player.id || null,
+      trialPlayerId: exact.player.trialPlayerId,
       matchedName: exact.player.name,
       confidence: exact.type === "name" ? 1 : 0.96,
       candidates: []
     };
   }
 
-  const contains = records
+  const contains = records.filter((record) => !record.player.trialPlayerId)
     .filter((record) => normalized.includes(record.alias) || record.alias.includes(normalized))
     .slice(0, 3);
 
@@ -81,7 +84,7 @@ function matchPlayer(rawName: string, players: ParserPlayer[]) {
     };
   }
 
-  const fuzzy = records
+  const fuzzy = records.filter((record) => !record.player.trialPlayerId)
     .filter((record) => isOneCharMismatch(normalized, record.alias))
     .slice(0, 3);
 
@@ -377,7 +380,24 @@ export function localParseMatch(input: {
   matchType: "INTERNAL" | "EXTERNAL";
   players: ParserPlayer[];
   teamAssignments: ParserAssignment[];
+  trialPlayers?: TrialParticipant[];
 }): ParseResult {
+  // These recognition records never become formal Player identities.
+  const eventPlayers = [...input.players, ...(input.matchType === "INTERNAL" ? input.trialPlayers ?? [] : []).map((trial) => ({ id: "", trialPlayerId: trial.id, name: trial.name, aliases: [] }))];
+  if (input.matchType === "INTERNAL") {
+    // Extract only explicit event clauses, not arbitrary narrative text.
+    for (const clause of input.rawText.split(/[，,；;。\n]|(?<=进球)/)) {
+      const text = clause.trim().replace(/^第[一二三四五六七八九十\d]+节[\s\S]*?\d+\s*[:：]\s*\d+\s*/, "");
+      const match = text.match(/^([\p{Script=Han}A-Za-z0-9·]+?)(?:助攻([\p{Script=Han}A-Za-z0-9·]+?))?(?:(?:替|为|代表)[红蓝白]队)?(?:进球|自摆乌龙|乌龙球?)/u);
+      if (!match) continue;
+      for (const rawName of [match[1], match[2]]) {
+        const name = rawName?.replace(/(?:临时)?代打$/, "");
+        if (!name || eventPlayers.some((p) => p.name === name || p.aliases.some((a) => a.alias === name))) continue;
+        // An empty formal id is resolved into a matchday trial after parsing.
+        eventPlayers.push({ id: "", name, aliases: [] });
+      }
+    }
+  }
   const lines = input.rawText
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -413,7 +433,7 @@ export function localParseMatch(input: {
       const [teamA, teamB] = parseTeams(line, sectionNo);
       const { events, uncertainItems: lineUncertain } = parseGoalEvents(
         line,
-        input.players,
+        eventPlayers,
         input.teamAssignments,
         [teamA, teamB]
       );

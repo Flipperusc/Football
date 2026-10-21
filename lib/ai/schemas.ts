@@ -5,6 +5,7 @@ export const aiTeamColorSchema = z.enum(["red", "blue", "white", "external"]);
 export const matchedPlayerSchema = z.object({
   rawName: z.string(),
   playerId: z.string().nullable(),
+  trialPlayerId: z.string().min(1).nullable().optional(),
   matchedName: z.string().nullable().optional(),
   confidence: z.number().min(0).max(1),
   candidates: z
@@ -16,7 +17,7 @@ export const matchedPlayerSchema = z.object({
       })
     )
     .default([])
-});
+}).refine((person) => !(person.playerId && person.trialPlayerId), "球员不能同时为正式和试训身份");
 
 export const parsedGoalEventSchema = z.object({
   type: z.enum(["goal", "own_goal"]),

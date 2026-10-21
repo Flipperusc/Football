@@ -3,12 +3,13 @@
 import { Alert, Divider, Modal, Select, Space, Tag, Typography } from "antd";
 import { internalTeamLabels, type EventException, type InternalTeam } from "@/lib/match-events";
 
-export function MatchEventConfirmationModal({ open, exceptions, issues, saving, error, onTeamChange, onConfirm, onCancel }: {
+export function MatchEventConfirmationModal({ open, exceptions, issues, saving, error, trialNames = [], onTeamChange, onConfirm, onCancel }: {
   open: boolean;
   exceptions: EventException[];
   issues: string[];
   saving: boolean;
   error?: string;
+  trialNames?: string[];
   onTeamChange: (event: EventException, team: InternalTeam) => void;
   onConfirm: () => void;
   onCancel: () => void;
@@ -19,25 +20,26 @@ export function MatchEventConfirmationModal({ open, exceptions, issues, saving, 
       okButtonProps={{ disabled: issues.length > 0 || exceptions.some((event) => !event.team) }}
       cancelButtonProps={{ disabled: saving }} closable={!saving} keyboard={!saving}
       onOk={onConfirm} onCancel={onCancel}>
-      <Alert type="info" showIcon message="出勤和积分仍按当天名单计算"
-        description="临时未到场者仍正常计算出勤和积分。代打者只算一次出勤，基础积分按原所属队计算。" />
+      <Alert type="info" showIcon message="请核对试训身份和特殊事件"
+        description="临时未到场者仍正常计算出勤；正式球员按原队排名计分。代打者只算一次出勤，试训人员不计正式个人数据。" />
+      <Typography.Paragraph style={{ marginTop: 12 }}><strong>试训球员：</strong>{trialNames.join("、") || "无"}</Typography.Paragraph>
       <div style={{ maxHeight: "55vh", overflowY: "auto", paddingInlineEnd: 8, marginTop: 16 }}>
         {exceptions.map((event, index) => (
           <section key={event.key} aria-label={`第${event.sectionNo}节特殊事件${event.eventIndex + 1}`} style={{ overflowWrap: "anywhere" }}>
             {index > 0 ? <Divider style={{ marginBlock: 16 }} /> : null}
             <Space wrap size={8}>
               <Typography.Text strong>第 {event.sectionNo} 节 · {internalTeamLabels[event.teamA]} vs {internalTeamLabels[event.teamB]}</Typography.Text>
-              <Tag color={event.type === "own_goal" ? "orange" : "blue"}>{event.type === "own_goal" ? "乌龙球" : "临时代打"}</Tag>
+              <Tag color={event.type === "own_goal" ? "orange" : "blue"}>{event.type === "own_goal" ? "乌龙球" : !event.scorerTeam || (event.assistName && !event.assistTeam) ? "试训事件" : "临时代打"}</Tag>
             </Space>
             <Typography.Paragraph style={{ marginBlock: 12 }}>
-              {event.scorerName}（当天属于{internalTeamLabels[event.scorerTeam]}）
+              {event.scorerName}（{event.scorerTeam ? `当天属于${internalTeamLabels[event.scorerTeam]}` : "试训"}）
               {event.representedTeam ? `本次代表${internalTeamLabels[event.representedTeam]}` : "，请确认本次得分队"}
               {event.type === "own_goal" ? `发生 ${event.count} 次乌龙球。` : `进球 ${event.count} 个。`}
             </Typography.Paragraph>
-            {event.assistName && event.assistTeam ? (
+            {event.assistName ? (
               <Typography.Paragraph>
-                助攻：{event.assistName}（当天属于{internalTeamLabels[event.assistTeam]}）
-                {event.team ? `，本次代表${internalTeamLabels[event.team]}，个人助攻 +${event.count}。` : "，请确认得分队。"}
+                助攻：{event.assistName}（{event.assistTeam ? `当天属于${internalTeamLabels[event.assistTeam]}` : "试训"}）
+                {event.team ? `，本次代表${internalTeamLabels[event.team]}${event.assistTeam ? `，个人助攻 +${event.count}` : "，不计正式个人助攻"}。` : "，请确认得分队。"}
               </Typography.Paragraph>
             ) : null}
             <Space wrap>
@@ -48,7 +50,7 @@ export function MatchEventConfirmationModal({ open, exceptions, issues, saving, 
                 onChange={(team) => onTeamChange(event, team)} />
             </Space>
             <Typography.Paragraph style={{ marginTop: 12, marginBottom: 0 }}>
-              {event.type === "own_goal" ? "乌龙球不计个人进球和助攻" : `${event.scorerName}个人进球 +${event.count}`}
+              {event.type === "own_goal" ? "乌龙球不计个人进球和助攻" : event.scorerTeam ? `${event.scorerName}个人进球 +${event.count}` : "试训进球只计团队比分，不计正式个人数据"}
             </Typography.Paragraph>
           </section>
         ))}

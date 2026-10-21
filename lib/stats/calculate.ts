@@ -129,7 +129,6 @@ export function allocatePlayerMatchdayPoints(input: {
     input.teamResults.map((result) => [result.teamColor, result.seasonPointsAwarded])
   );
   const pointsByPlayer = new Map<string, PlayerPointInput>();
-
   for (const assignment of input.assignments.filter((entry) => entry.teamColor !== "EXTERNAL")) {
     const basePoints = pointsByTeam.get(assignment.teamColor) ?? 0;
     pointsByPlayer.set(assignment.playerId, {
@@ -210,6 +209,9 @@ export function calculateSeasonPlayerStats(input: {
       (event) => event.matchType === "EXTERNAL" && event.assistPlayerId === player.id
     );
 
+    const internalOwnGoals = input.goalEvents
+      .filter((event) => event.matchType === "INTERNAL" && event.kind === "OWN_GOAL" && event.scorerId === player.id)
+      .reduce((sum, event) => sum + event.count, 0);
     const internalGoals = internalEvents.reduce((sum, event) => sum + event.count, 0);
     const externalGoals = externalEvents.reduce((sum, event) => sum + event.count, 0);
     const internalAssists = internalAssistEvents.reduce((sum, event) => sum + event.count, 0);
@@ -231,6 +233,7 @@ export function calculateSeasonPlayerStats(input: {
       name: player.name,
       position: player.position ?? null,
       internalGoals,
+      internalOwnGoals,
       internalAssists,
       internalAppearances,
       internalSeasonPoints,

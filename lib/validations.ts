@@ -105,11 +105,26 @@ export const seasonCreateSchema = z.object({
 
 export const seasonUpdateSchema = seasonCreateSchema.partial();
 
+export const participantCorrectionsSchema = z.array(z.object({
+  rawName: z.string().trim().min(1).max(100), playerId: z.string().min(1)
+})).max(200).refine((rows) => new Set(rows.map((row) => row.rawName.replace(/\s+/g, "").toLowerCase())).size === rows.length, "同一原始名字只能有一项身份纠正");
+
+export const trialPlayerInputSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1).max(100),
+  confirmed: z.boolean().default(false)
+});
+export const trialPlayersInputSchema = z.array(trialPlayerInputSchema).max(100).refine(
+  (rows) => new Set(rows.map((row) => row.id)).size === rows.length, "试训身份不能重复"
+);
+
 export const teamAssignmentInputSchema = z.object({
   teamColor: teamColorSchema,
   playerId: z.string().min(1),
   role: assignmentRoleSchema.default("PLAYER"),
-  isCaptain: z.boolean().default(false)
+  isCaptain: z.boolean().default(false),
+  // Retained for old clients; disabling matchday points is no longer supported.
+  pointsEligible: z.boolean().optional().transform(() => true)
 });
 
 export const matchDayCreateSchema = z.object({
@@ -117,6 +132,8 @@ export const matchDayCreateSchema = z.object({
   date: z.coerce.date(),
   type: matchTypeSchema,
   rawText: z.string().optional().nullable(),
+  participantCorrections: participantCorrectionsSchema.default([]),
+  trialPlayers: trialPlayersInputSchema.default([]),
   assignments: z.array(teamAssignmentInputSchema).default([])
 });
 
@@ -125,6 +142,8 @@ export const matchDayUpdateSchema = z.object({
   date: z.coerce.date().optional(),
   rawText: z.string().optional().nullable(),
   parseStatus: z.enum(["PENDING", "PARSED", "CONFIRMED", "FAILED"]).optional(),
+  participantCorrections: participantCorrectionsSchema.optional(),
+  trialPlayers: trialPlayersInputSchema.optional(),
   assignments: z.array(teamAssignmentInputSchema).optional()
 });
 
@@ -141,6 +160,7 @@ export const rosterParseRequestSchema = z.object({
 
 export const confirmRequestSchema = z.object({
   parsedJson: z.unknown(),
+  trialPlayers: trialPlayersInputSchema.optional(),
   eventConfirmationToken: z.string().max(256).optional(),
   matchDayVersion: z.string().datetime().optional(),
   teamAssignments: z.array(teamAssignmentInputSchema).optional(),

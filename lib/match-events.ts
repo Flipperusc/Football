@@ -5,7 +5,8 @@ export type InternalTeamColor = Exclude<TeamColor, "EXTERNAL">;
 export const internalTeamLabels: Record<InternalTeam, string> = { red: "红队", blue: "蓝队", white: "白队" };
 export const internalTeamToDb = { red: "RED", blue: "BLUE", white: "WHITE" } as const;
 
-type EventPlayer = { playerId: string | null; rawName: string; matchedName?: string | null };
+export type TrialParticipant = { id: string; name: string; confirmed: boolean };
+type EventPlayer = { trialPlayerId?: string | null; playerId: string | null; rawName: string; matchedName?: string | null };
 export type MatchEvent = {
   type: "goal" | "own_goal";
   team?: InternalTeam | "external";
@@ -22,7 +23,7 @@ export type EventGame = {
   scoreB: number;
   events: MatchEvent[];
 };
-export type EventAssignment = { playerId: string; teamColor: TeamColor };
+export type EventAssignment = { playerId: string; teamColor: TeamColor; pointsEligible?: boolean };
 export type EventException = {
   key: string;
   gameIndex: number;
@@ -34,7 +35,7 @@ export type EventException = {
   team?: InternalTeam;
   representedTeam?: InternalTeam;
   scorerName: string;
-  scorerTeam: InternalTeam;
+  scorerTeam?: InternalTeam;
   assistName?: string;
   assistTeam?: InternalTeam;
   count: number;
@@ -43,7 +44,7 @@ export type EventException = {
 export type EventResolution = {
   key: string;
   teamColor: InternalTeamColor;
-  scorerRosterTeam: InternalTeamColor;
+  scorerRosterTeam: InternalTeamColor | null;
   assistRosterTeam: InternalTeamColor | null;
   isException: boolean;
 };
@@ -60,10 +61,27 @@ export function defaultEventTeam(event: MatchEvent, game: Pick<EventGame, "teamA
 }
 
 /** Read-only inspection shared by the confirmation UI and the authoritative server write. */
-export function inspectInternalEvents(parsed: { games: EventGame[] }, assignments: EventAssignment[]) {
+export function inspectInternalEvents(parsed: { games: EventGame[] }, assignments: EventAssignment[], trialPlayers: TrialParticipant[] = []) {
   const issues: string[] = [];
   const exceptions: EventException[] = [];
   const resolutions: EventResolution[] = [];
+  const trialById = new Map(trialPlayers.map((trial) => [trial.id, trial]));
+  if (trialById.size !== trialPlayers.length) issues.push("试训身份不能重复");
+  for (const trial of trialPlayers) if (!trial.confirmed) issues.push(`试训球员 ${trial.name} 尚未确认身份`);
+  const validParticipant = (person: EventPlayer, prefix: string) => {
+    if (person.trialPlayerId) {
+      if (person.playerId || !trialById.has(person.trialPlayerId)) {
+        issues.push(`${prefix}试训身份无效，请重新匹配当天人员`);
+        return false;
+      }
+      return true;
+    }
+    if (!person.playerId) {
+      issues.push(`${prefix}仍有未匹配的进球或助攻球员`);
+      return false;
+    }
+    return true;
+  };
   const assignedIds = new Set<string>();
   for (const assignment of assignments) {
     if (assignedIds.has(assignment.playerId)) issues.push("同一球员不能重复分队");
@@ -80,13 +98,10 @@ export function inspectInternalEvents(parsed: { games: EventGame[] }, assignment
     game.events.forEach((event, eventIndex) => {
       const key = `${gameIndex}:${eventIndex}`;
       const scorerName = event.scorer.matchedName || event.scorer.rawName || "未知球员";
-      if (!event.scorer.playerId || (event.assist && !event.assist.playerId)) {
-        issues.push(`${prefix}仍有未匹配的进球或助攻球员`);
-        return;
-      }
+      if (!validParticipant(event.scorer, prefix) || (event.assist && !validParticipant(event.assist, prefix))) return;
       const scorerTeam = rosterTeam(event.scorer.playerId, assignments);
       const assistTeam = event.assist ? rosterTeam(event.assist.playerId, assignments) : undefined;
-      if (!scorerTeam || (event.assist && !assistTeam)) {
+      if ((!scorerTeam && !event.scorer.trialPlayerId) || (event.assist && !assistTeam && !event.assist.trialPlayerId)) {
         issues.push(`${prefix}球员尚未分队，请先补充当天红、蓝、白分队名单`);
         return;
       }
@@ -104,7 +119,7 @@ export function inspectInternalEvents(parsed: { games: EventGame[] }, assignment
       const reasons: EventException["reasons"] = [];
       if (event.type === "own_goal") reasons.push("OWN_GOAL");
       if (!team) reasons.push("TEAM_REQUIRED");
-      if (representedTeam && scorerTeam !== representedTeam) reasons.push("SCORER_GUEST");
+      if (representedTeam && scorerTeam && scorerTeam !== representedTeam) reasons.push("SCORER_GUEST");
       if (event.type === "goal" && team && assistTeam && assistTeam !== team) reasons.push("ASSIST_GUEST");
       if (reasons.length) {
         exceptions.push({
@@ -117,7 +132,7 @@ export function inspectInternalEvents(parsed: { games: EventGame[] }, assignment
       if (team) {
         knownGoals[team] += event.count;
         resolutions.push({
-          key, teamColor: internalTeamToDb[team], scorerRosterTeam: internalTeamToDb[scorerTeam],
+          key, teamColor: internalTeamToDb[team], scorerRosterTeam: scorerTeam ? internalTeamToDb[scorerTeam] : null,
           assistRosterTeam: assistTeam ? internalTeamToDb[assistTeam] : null, isException: reasons.length > 0
         });
       }

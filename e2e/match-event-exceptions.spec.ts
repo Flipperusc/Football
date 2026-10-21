@@ -26,6 +26,8 @@ async function cleanup(data: Fixture) {
 async function login(page: Page) {
   const response = await page.request.post("/api/admin/login", { data: { username: process.env.ADMIN_USERNAME, password: process.env.ADMIN_PASSWORD } });
   expect(response.ok()).toBeTruthy();
+  // Forward the authenticated Secure cookie for API calls over test-only loopback HTTP.
+  if (process.env.E2E_USE_BUILD === "1") await page.context().setExtraHTTPHeaders({ Cookie: response.headers()["set-cookie"].split(";")[0] });
 }
 async function parseFixture(page: Page, data: Fixture) {
   const response = await page.request.post(`/api/matchdays/${data.match.id}/parse`, { data: { matchType: "INTERNAL", rawText: data.rawText } });
@@ -35,7 +37,10 @@ async function parseFixture(page: Page, data: Fixture) {
 }
 async function selectOption(page: Page, label: string, value: string) {
   const input = page.getByRole("combobox", { name: label, exact: true });
+  // Wait for modal transition focus handling before opening its body-mounted popup.
+  await expect(page.locator(".ant-modal[class*=zoom-appear], .ant-modal[class*=zoom-enter], .ant-modal[class*=zoom-leave]")).toHaveCount(0);
   await page.locator(".ant-select").filter({ has: input }).locator(".ant-select-selector").click();
+  if (await input.isEditable()) await input.fill(value);
   await expect(input).toHaveAttribute("aria-expanded", "true");
   const listId = await input.getAttribute("aria-controls");
   const popup = page.locator(".ant-select-dropdown").filter({ has: page.locator(`[id="${listId}"]`) });
@@ -50,7 +55,8 @@ test("guest goals, own goals, cancel, re-confirmation and roster-based statistic
   try {
     await login(page);
     await parseFixture(page, data);
-    await selectOption(page, "第1节事件2类型", "乌龙球");
+    await page.getByRole("button", { name: "第1节事件2转为乌龙球", exact: true }).click();
+    await page.getByRole("dialog").filter({ hasText: "转为乌龙球" }).getByRole("button", { name: "确认转换", exact: true }).click();
     await page.getByRole("button", { name: "确认入库", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "特殊比赛事件确认" });
     await expect(dialog).toBeVisible();
@@ -186,9 +192,15 @@ test("new and moved events are checked again and guest own goals clear assists",
     await selectOption(page, "第1节事件1球员", data.names.guest);
     await selectOption(page, "第1节事件1助攻", data.names.helper);
     await selectOption(page, "第1节事件1得分队", "白队");
-    await selectOption(page, "第1节事件1类型", "乌龙球");
-    await expect(page.getByRole("combobox", { name: "第1节事件1助攻", exact: true })).toBeDisabled();
-    await expect(page.getByText("乌龙球不计助攻，已清空该事件的助攻球员", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "第1节事件1转为乌龙球", exact: true }).click();
+    const conversion = page.getByRole("dialog").filter({ hasText: "转为乌龙球" });
+    await conversion.getByRole("button", { name: /取\s*消|返回/ }).click();
+    await expect(page.getByRole("combobox", { name: "第1节事件1助攻", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "第1节事件1转为乌龙球", exact: true }).click();
+    await expect(conversion).toContainText("转换后将清空助攻");
+    await conversion.getByRole("button", { name: "确认转换", exact: true }).click();
+    await expect(page.getByRole("combobox", { name: "第1节事件1助攻", exact: true })).toHaveCount(0);
+
     await selectOption(page, "第1节事件1节次", "第 4 节");
     await page.getByRole("button", { name: "确认入库", exact: true }).click();
     await expect(page.getByText("第 4 节已记录进球超过对应队伍比分，请检查得分队、进球数量或比分", { exact: true })).toBeVisible();

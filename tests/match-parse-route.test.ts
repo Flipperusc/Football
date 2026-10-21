@@ -197,3 +197,16 @@ describe("match parse route consistency", () => {
     });
   });
 });
+
+describe("confirmed parse status preservation", () => {
+  it("keeps published match data visible while preparing a new parsed draft", async () => {
+    mocks.db.matchDay.findUnique.mockResolvedValue({ id: "m1", type: "INTERNAL", confirmedAt: new Date(), updatedAt: new Date("2026-10-21T00:00:00Z"), assignments: [], trialPlayers: [] });
+    mocks.db.player.findMany.mockResolvedValue([]);
+    mocks.db.matchDay.updateMany.mockResolvedValue({ count: 1 });
+    mocks.db.$transaction.mockImplementation(async (fn) => fn(mocks.db));
+    mocks.parseMatchWithAi.mockResolvedValue(successfulParse());
+    const response = await POST(parseRequest(), { params: { id: "m1" } });
+    expect(response.status).toBe(200);
+    expect(mocks.db.matchDay.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: expect.objectContaining({ updatedAt: new Date("2026-10-21T00:00:00Z") }), data: expect.objectContaining({ parseStatus: "CONFIRMED" }) }));
+  });
+});

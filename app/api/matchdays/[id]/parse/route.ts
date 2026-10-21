@@ -1,9 +1,13 @@
+import { applyParticipantCorrections } from "@/lib/ai/participant-corrections";
+import { randomUUID } from "node:crypto";
+import { assignAutomaticTrials } from "@/lib/ai/automatic-trials";
+import { preserveConfirmedParticipants, confirmedParticipantRecognition } from "@/lib/ai/preserve-confirmed-participants";
 import { NextResponse } from "next/server";
 import { DeepSeekError, getDeepSeekModel } from "@/lib/ai/deepseek-client";
 import { parseMatchWithAi } from "@/lib/ai/deepseek";
 import { prisma } from "@/lib/prisma";
 import { apiErrorResponse } from "@/lib/server/api-error";
-import { parseRequestSchema } from "@/lib/validations";
+import { parseRequestSchema, teamAssignmentInputSchema, trialPlayersInputSchema, participantCorrectionsSchema } from "@/lib/validations";
 
 type MatchType = "INTERNAL" | "EXTERNAL";
 
@@ -44,17 +48,21 @@ async function recordFailedParse({
   matchDayId,
   matchType,
   rawText,
-  error
+  error,
+  updatedAt,
+  confirmed
 }: {
   matchDayId: string;
   matchType: MatchType;
   rawText: string;
   error: unknown;
+  updatedAt?: Date;
+  confirmed?: boolean;
 }) {
   return prisma.$transaction(async (tx) => {
     const updated = await tx.matchDay.updateMany({
-      where: { id: matchDayId, type: matchType },
-      data: { rawText, parseStatus: "FAILED" }
+      where: { id: matchDayId, type: matchType, updatedAt },
+      data: { rawText, parseStatus: confirmed ? "CONFIRMED" : "FAILED" }
     });
     if (updated.count === 0) return false;
 
@@ -87,8 +95,15 @@ export async function POST(request: Request, { params }: { params: { id: string 
       select: {
         id: true,
         type: true,
+        updatedAt: true,
+        confirmedAt: true,
+        participantCorrections: true,
+        draftAssignments: true,
+        draftTrialPlayers: true,
+        trialPlayers: true,
+        parseResults: { where: { modelName: "manual-confirmation" }, orderBy: { createdAt: "desc" }, take: 1 },
         assignments: {
-          select: { playerId: true, teamColor: true, role: true, isCaptain: true }
+          select: { playerId: true, teamColor: true, role: true, isCaptain: true, pointsEligible: true }
         }
       }
     });
@@ -107,6 +122,9 @@ export async function POST(request: Request, { params }: { params: { id: string 
     );
   }
 
+  const effectiveTrials = Array.isArray(matchDay.draftTrialPlayers) ? trialPlayersInputSchema.parse(matchDay.draftTrialPlayers) : matchDay.trialPlayers ?? [];
+  const effectiveAssignments = Array.isArray(matchDay.draftAssignments) ? teamAssignmentInputSchema.array().parse(matchDay.draftAssignments) : matchDay.assignments;
+  const corrections = Array.isArray(matchDay.participantCorrections) ? participantCorrectionsSchema.parse(matchDay.participantCorrections) : [];
   let parsed;
   try {
     const players = await prisma.player.findMany({
@@ -114,18 +132,17 @@ export async function POST(request: Request, { params }: { params: { id: string 
       orderBy: { name: "asc" }
     });
 
+    const recognition = confirmedParticipantRecognition(matchDay.parseResults?.[0]?.parsedJson,
+      players.map((player) => ({ id: player.id, name: player.name,
+        aliases: [...player.aliases.map((alias) => ({ alias: alias.alias, aliasType: alias.aliasType })),
+          ...corrections.filter((row) => row.playerId === player.id).map((row) => ({ alias: row.rawName, aliasType: "MANUAL" }))]
+      })), effectiveTrials, corrections);
     parsed = await parseMatchWithAi({
       rawText: body.rawText,
       matchType: body.matchType,
-      players: players.map((player) => ({
-        id: player.id,
-        name: player.name,
-        aliases: player.aliases.map((alias) => ({
-          alias: alias.alias,
-          aliasType: alias.aliasType
-        }))
-      })),
-      teamAssignments: matchDay.assignments
+      players: recognition.players,
+      trialPlayers: recognition.trials,
+      teamAssignments: effectiveAssignments
     });
   } catch (error) {
     let parentStillExists = true;
@@ -134,7 +151,9 @@ export async function POST(request: Request, { params }: { params: { id: string 
         matchDayId: params.id,
         matchType: body.matchType,
         rawText: body.rawText,
-        error
+        error,
+        updatedAt: matchDay.updatedAt,
+        confirmed: Boolean(matchDay.confirmedAt)
       });
     } catch (recordError) {
       console.error("[match-parse]", {
@@ -154,13 +173,17 @@ export async function POST(request: Request, { params }: { params: { id: string 
     return apiErrorResponse(error, "解析比赛失败");
   }
 
+  parsed.parsed = applyParticipantCorrections(preserveConfirmedParticipants(parsed.parsed, matchDay.parseResults?.[0]?.parsedJson, effectiveTrials), corrections);
+  const automaticTrials = assignAutomaticTrials(parsed.parsed, effectiveTrials, randomUUID);
+
   try {
     await prisma.$transaction(async (tx) => {
       const updated = await tx.matchDay.updateMany({
-        where: { id: params.id, type: body.matchType },
+        where: { id: params.id, type: body.matchType, updatedAt: matchDay.updatedAt },
         data: {
           rawText: body.rawText,
-          parseStatus: "PARSED"
+          parseStatus: matchDay.confirmedAt ? "CONFIRMED" : "PARSED",
+          ...(automaticTrials.length > effectiveTrials.length ? { draftTrialPlayers: automaticTrials } : {})
         }
       });
       if (updated.count === 0) {

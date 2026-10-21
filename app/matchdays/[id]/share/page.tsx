@@ -7,7 +7,8 @@ import { App, Alert, Button, Empty, Spin, Tag } from "antd";
 import { ArrowLeft, Download, RefreshCw, Share2, Trophy } from "lucide-react";
 import { toPng } from "html-to-image";
 import { requestJson } from "@/lib/client-types";
-import { goalEventMarker, type StoredGoalAttribution } from "@/lib/match-events";
+import type { StoredGoalAttribution } from "@/lib/match-events";
+import { shareEventText } from "@/lib/stats/share-events";
 
 type TeamColor = "RED" | "BLUE" | "WHITE" | "EXTERNAL";
 type InternalTeamColor = Exclude<TeamColor, "EXTERNAL">;
@@ -30,10 +31,12 @@ type ShareMatchDay = {
     id: string;
     internalGameId?: string | null;
     teamColor?: TeamColor | null;
-    scorerId: string;
+    scorerId: string | null;
     assistPlayerId?: string | null;
     count: number;
-    scorer: { id: string; name: string };
+    scorer: { id: string; name: string } | null;
+    scorerTrialPlayer?: { id: string; name: string } | null;
+    assistTrialPlayer?: { id: string; name: string } | null;
     assistPlayer?: { id: string; name: string } | null;
   })[];
   teamResults: {
@@ -58,40 +61,6 @@ function teamScore(game: ShareMatchDay["internalGames"][number], teamColor: Inte
   if (game.teamA === teamColor) return game.scoreA;
   if (game.teamB === teamColor) return game.scoreB;
   return null;
-}
-
-function mergeNameCounts(items: { name: string; count: number }[]) {
-  const counts = new Map<string, number>();
-  for (const item of items) counts.set(item.name, (counts.get(item.name) ?? 0) + item.count);
-  return Array.from(counts.entries()).map(([name, count]) => name + (count > 1 ? "×" + count : "")).join("、");
-}
-
-function goalsText(
-  game: ShareMatchDay["internalGames"][number],
-  teamColor: InternalTeamColor,
-  events: ShareMatchDay["goalEvents"]
-) {
-  const score = teamScore(game, teamColor);
-  if (score === null) return "—";
-  const text = mergeNameCounts(
-    events
-      .filter((event) => event.internalGameId === game.id && event.teamColor === teamColor)
-      .map((event) => ({ name: event.scorer.name + goalEventMarker(event, game), count: event.count }))
-  );
-  return text || (score === 0 ? "0" : String(score));
-}
-
-function assistsText(
-  game: ShareMatchDay["internalGames"][number],
-  teamColor: InternalTeamColor,
-  events: ShareMatchDay["goalEvents"]
-) {
-  if (teamScore(game, teamColor) === null) return "—";
-  return mergeNameCounts(
-    events
-      .filter((event) => event.kind !== "OWN_GOAL" && event.internalGameId === game.id && event.teamColor === teamColor && event.assistPlayer)
-      .map((event) => ({ name: event.assistPlayer!.name + goalEventMarker(event, game, "assist"), count: event.count }))
-  ) || "—";
 }
 
 export default function MatchDaySharePage() {
@@ -234,7 +203,7 @@ export default function MatchDaySharePage() {
                   <thead>
                     <tr>
                       <th className="share-section-head">节次</th>
-                      {teams.map((team) => <th className={teamClassNames[team]} colSpan={2} key={team}>{teamLabels[team]}队</th>)}
+                      {teams.map((team) => <th className={teamClassNames[team]} colSpan={4} key={team}>{teamLabels[team]}队</th>)}
                     </tr>
                     <tr>
                       <th className="share-section-head" />
@@ -248,8 +217,10 @@ export default function MatchDaySharePage() {
                         {teams.map((team) => (
                           <FragmentCells
                             key={game.id + "-" + team}
-                            goals={goalsText(game, team, matchDay.goalEvents)}
-                            assists={assistsText(game, team, matchDay.goalEvents)}
+                            score={teamScore(game, team)}
+                            goals={shareEventText(game, team, matchDay.goalEvents, "NORMAL")}
+                            ownGoals={shareEventText(game, team, matchDay.goalEvents, "OWN_GOAL")}
+                            assists={shareEventText(game, team, matchDay.goalEvents, "ASSIST")}
                             highlight={teamScore(game, team) !== null && teamScore(game, team) !== 0}
                           />
                         ))}
@@ -259,7 +230,7 @@ export default function MatchDaySharePage() {
                       <th>积分</th>
                       {teams.map((team) => {
                         const points = resultPoints.get(team) ?? 0;
-                        return <td colSpan={2} key={team} className={points === leaderPoints ? "share-leading-points" : undefined}>{points}</td>;
+                        return <td colSpan={4} key={team} className={points === leaderPoints ? "share-leading-points" : undefined}>{points}</td>;
                       })}
                     </tr>
                   </tbody>
@@ -278,9 +249,9 @@ export default function MatchDaySharePage() {
 }
 
 function FragmentHeader() {
-  return <><th>进球</th><th>助攻</th></>;
+  return <><th>比分</th><th>进球</th><th>助攻</th><th>乌龙</th></>;
 }
 
-function FragmentCells({ goals, assists, highlight }: { goals: string; assists: string; highlight: boolean }) {
-  return <><td className={highlight ? "share-goal-highlight" : undefined}>{goals}</td><td>{assists}</td></>;
+function FragmentCells({ score, goals, assists, ownGoals, highlight }: { score: number | null; goals: string; assists: string; ownGoals: string; highlight: boolean }) {
+  return <><td className={highlight ? "share-goal-highlight" : undefined}>{score ?? "—"}</td><td>{goals}</td><td>{assists}</td><td>{ownGoals}</td></>;
 }
