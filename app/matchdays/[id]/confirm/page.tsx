@@ -19,13 +19,13 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { ArrowLeft, Plus, Save, Trash2 } from "lucide-react";
-import type { MatchDay, Player } from "@/lib/client-types";
+import type { MatchDay, Player, TrialIdentityChoice, TrialResolutionResponse } from "@/lib/client-types";
 import { requestJson } from "@/lib/client-types";
 import { defaultEventTeam, inspectInternalEvents, type EventException } from "@/lib/match-events";
 import { MatchEventConfirmationModal } from "@/components/MatchEventConfirmationModal";
 import { TrialPlayersPanel } from "@/components/TrialPlayersPanel";
 import { assignAutomaticTrials } from "@/lib/ai/automatic-trials";
-import { replaceTrialParticipant, type TrialDraft } from "@/lib/trial-players";
+import { resolveTrialReferences, type TrialDraft } from "@/lib/trial-players";
 
 type AiTeamColor = "red" | "blue" | "white" | "external";
 
@@ -346,22 +346,25 @@ export default function ConfirmMatchDayPage() {
     });
   }
 
-  function resolveTrial(trialId: string, playerId: string, teamColor: InternalTeamColor) {
-    if (submitting.current) return;
-    const player = players.find((item) => item.id === playerId);
-    if (!player) return;
-    setMatchDay((current) => {
-      if (!current) return current;
-      const assignments = [...(current.assignments ?? [])];
-      if (!assignments.some((row) => row.playerId === playerId)) assignments.push({ id: `draft-${playerId}`, playerId, teamColor, role: "PLAYER", isCaptain: false, pointsEligible: true, player });
-      return { ...current, assignments, trialPlayers: (current.trialPlayers ?? []).filter((trial) => trial.id !== trialId) };
-    });
-    updateParsed((next) => {
-      for (const game of next.games ?? []) for (const event of game.events) {
-        event.scorer = replaceTrialParticipant(event.scorer, trialId, player);
-        if (event.assist) event.assist = replaceTrialParticipant(event.assist, trialId, player);
-      }
-    });
+  async function resolveTrial(trialId: string, choice: TrialIdentityChoice) {
+    if (submitting.current || !matchDay || !parsed) return;
+    submitting.current = true;
+    setSaving(true);
+    try {
+      const result = await requestJson<TrialResolutionResponse>("/api/players/resolve-trial", {
+        method: "POST", body: JSON.stringify({ trialId, ...choice, matchDayId: matchDay.id,
+          matchDayVersion: matchDay.updatedAt, trialPlayers: matchDay.trialPlayers ?? [],
+          participantCorrections: matchDay.participantCorrections ?? [], parsedJson: parsed })
+      });
+      setPlayers((current) => [...current.filter((player) => player.id !== result.player.id), result.player]);
+      setMatchDay((current) => current ? { ...current, trialPlayers: result.trialPlayers,
+        participantCorrections: result.participantCorrections, updatedAt: result.matchDayVersion ?? current.updatedAt } : current);
+      setParsed((result.parsedJson as ParsedMatch | undefined) ?? resolveTrialReferences(parsed, trialId, result.player).parsed);
+      setEventConfirmationToken(undefined);
+      setPendingEventConfirmation(null);
+      setPendingTeamResults([]);
+      setConfirmationError(undefined);
+    } finally { submitting.current = false; setSaving(false); }
   }
 
   function updateEvent(row: EventRow, patch: Partial<ParsedEvent>) {
@@ -671,7 +674,7 @@ export default function ConfirmMatchDayPage() {
               updateEvent(row, { scorer, team, needsReview: true });
             }} />
           {parsed?.matchType === "internal" ? <Typography.Text type="secondary">
-            {row.scorer.trialPlayerId ? "试训，不计正式个人数据" : `当天${originalTeam ? teamLabels[originalTeam] : "未分队"}`}
+            {row.scorer.trialPlayerId ? "试训，不计正式个人数据" : originalTeam ? `当天${teamLabels[originalTeam]}` : "正式球员 · 当天未分队 · 代打"}
           </Typography.Text> : null}
         </Space>;
       }
@@ -685,7 +688,7 @@ export default function ConfirmMatchDayPage() {
             value={row.assist?.trialPlayerId ? `trial:${row.assist.trialPlayerId}` : row.assist?.playerId ?? undefined} options={participantOptions} disabled={saving || row.type === "own_goal"}
             placeholder={row.type === "own_goal" ? "乌龙球不计助攻" : "无助攻"}
             onChange={(playerId) => updateEvent(row, { assist: playerId ? eventPlayerRef(playerId, row.assist?.rawName) : null })} />
-          {row.assist && parsed?.matchType === "internal" ? <Typography.Text type="secondary">{row.assist.trialPlayerId ? "试训，不计正式个人数据" : `当天${originalTeam ? teamLabels[originalTeam] : "未分队"}`}</Typography.Text> : null}
+          {row.assist && parsed?.matchType === "internal" ? <Typography.Text type="secondary">{row.assist.trialPlayerId ? "试训，不计正式个人数据" : originalTeam ? `当天${teamLabels[originalTeam]}` : "正式球员 · 当天未分队 · 代打"}</Typography.Text> : null}
         </Space>;
       }
     },

@@ -43,6 +43,23 @@ async function preview(data: ReturnType<typeof fixture>) {
 }
 
 describe("event confirmation protocol", () => {
+  it("confirms off-roster formal goals and assists without awarding roster points", async () => {
+    const data = fixture();
+    data.matchDay.assignments = data.matchDay.assignments.filter((row) => !["guest", "helper"].includes(row.playerId));
+    const pending = await preview(data);
+    expect(pending.code).toBe("MATCH_EVENT_CONFIRMATION_REQUIRED");
+    const result = await confirmMatchDay(data.prisma, { ...data.input, eventConfirmationToken: pending.confirmationToken });
+    expect(result.goalEvents[0]).toMatchObject({ scorerId: "guest", assistPlayerId: "helper", scorerRosterTeam: null, assistRosterTeam: null, scorerIsGuest: true, assistIsGuest: true });
+    expect(result.playerPoints.some((point) => ["guest", "helper"].includes(String(point.playerId)))).toBe(false);
+    expect(result.assignments).toHaveLength(2);
+  });
+
+  it("rejects a nonexistent formal event identity before deleting saved events", async () => {
+    const data = fixture();
+    data.input.parsedJson.games[0].events[0].scorer.playerId = "missing";
+    await expect(confirmMatchDay(data.prisma, data.input)).rejects.toThrow("正式球员不存在");
+    expect(data.tx.goalEvent.deleteMany).not.toHaveBeenCalled();
+  });
   it("rejects a page edited against an older persisted match version", async () => {
     const data = fixture();
     await expect(confirmMatchDay(data.prisma, { ...data.input, matchDayVersion: "2026-10-18T01:00:00.000Z" })).rejects.toMatchObject({ code: "MATCH_DAY_CHANGED" });

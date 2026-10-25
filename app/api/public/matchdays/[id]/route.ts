@@ -33,6 +33,8 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
             kind: true,
             scorerRosterTeam: true,
             assistRosterTeam: true,
+            scorerIsGuest: true,
+            assistIsGuest: true,
             scorerId: true,
             assistPlayerId: true,
             count: true,

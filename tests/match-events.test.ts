@@ -68,9 +68,24 @@ describe("internal event attribution", () => {
     expect(result.issues.join()).toContain("得分队");
   });
 
-  it("rejects assists on own goals and unknown or unassigned players", () => {
+  it.each(["scorer", "assist", "both"])("accepts unassigned formal %s as confirmed guests", (role) => {
+    const event = { scorer: player(role === "assist" ? "blue" : "guest"), assist: role === "scorer" ? null : player("helper") };
+    const result = inspectInternalEvents(match(event), roster);
+    expect(result.issues).toEqual([]);
+    expect(result.exceptions[0].reasons).toEqual(role === "scorer" ? ["SCORER_GUEST"] : role === "assist" ? ["ASSIST_GUEST"] : ["SCORER_GUEST", "ASSIST_GUEST"]);
+    expect(result.exceptions[0]).toMatchObject({ scorerIsTrial: false, assistIsTrial: false });
+    expect(result.resolutions[0]).toMatchObject({ scorerIsGuest: role !== "assist", assistIsGuest: role !== "scorer" });
+  });
+
+  it("requires attribution for an off-roster scorer", () => {
+    const result = inspectInternalEvents(match({ scorer: player("guest"), team: undefined }), roster);
+    expect(result.issues).toEqual([]);
+    expect(result.exceptions[0].reasons).toContain("TEAM_REQUIRED");
+    expect(result.exceptions[0].reasons).toContain("SCORER_GUEST");
+  });
+
+  it("rejects assists on own goals and unmatched players", () => {
     expect(inspectInternalEvents(match({ type: "own_goal", scorer: player("white"), assist: player("blue") }), roster).issues.join()).toContain("乌龙球不计助攻");
-    expect(inspectInternalEvents(match({ scorer: player("unknown") }), roster).issues.join()).toContain("分队");
     expect(inspectInternalEvents(match({ scorer: { ...player(""), playerId: null } }), roster).issues.join()).toContain("未匹配");
   });
 

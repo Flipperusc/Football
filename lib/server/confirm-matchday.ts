@@ -150,6 +150,13 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
     const trialPlayers = requestedTrials === undefined ? matchDay.trialPlayers ?? [] : trialPlayersInputSchema.parse(requestedTrials);
     if (parsed.matchType === "external" && trialPlayers.length) throw new Error("队外赛不支持试训身份");
     if (requestedTrials) await assertTrialPlayerScope(tx, input.matchDayId, trialPlayers);
+    const events = parsed.matchType === "internal" ? parsed.games.flatMap((game) => game.events) : parsed.events;
+    const formalIds = [...new Set(events.flatMap((event) => [event.scorer.playerId, event.assist?.playerId]).filter((id): id is string => Boolean(id)))];
+    if (formalIds.length) {
+      const existingPlayers = await tx.player.findMany({ where: { id: { in: formalIds } }, select: { id: true } });
+      const existingIds = new Set(existingPlayers.map((player) => player.id));
+      if (formalIds.some((id) => !existingIds.has(id))) throw new Error("事件中的正式球员不存在，请重新加载后匹配球员");
+    }
     const aliasesToSave = input.saveAliases ?? [];
     const aliasOwnerIds = [...new Set(aliasesToSave.map((alias) => alias.playerId))];
     const aliasOwners = aliasOwnerIds.length
@@ -299,6 +306,8 @@ export async function confirmMatchDay(prisma: PrismaClient, input: ConfirmInput)
               kind: event.type === "own_goal" ? "OWN_GOAL" : "NORMAL",
               scorerRosterTeam: resolution.scorerRosterTeam,
               assistRosterTeam: resolution.assistRosterTeam,
+              scorerIsGuest: resolution.scorerIsGuest,
+              assistIsGuest: resolution.assistIsGuest,
               exceptionConfirmedAt: resolution.isException ? exceptionConfirmedAt : null,
               exceptionConfirmedBy: resolution.isException ? getAdminCredentials().username : null,
               scorerId: event.scorer.playerId,

@@ -25,6 +25,10 @@ async function login(page: Page) {
   // Production cookies are Secure. Explicitly forward the real login cookie only
   // in this loopback test harness, without changing application cookie policy.
   if (process.env.E2E_USE_BUILD === "1") await page.context().setExtraHTTPHeaders({ Cookie: response.headers()["set-cookie"].split(";")[0] });
+  // These regression flows exercise the inline panel; the new reminder has its own E2E coverage.
+  await page.addLocatorHandler(page.getByRole("dialog", { name: "发现未加入正式名单的球员", exact: true }), async (dialog) => {
+    await dialog.getByRole("button", { name: "稍后处理", exact: true }).click();
+  });
 }
 async function selectOption(page: Page, label: string, value: string) {
   const input = page.getByRole("combobox", { name: label === "赛季" ? /赛季/ : label, exact: label !== "赛季" });
@@ -292,7 +296,7 @@ test("correcting a pending trial identity updates all event roles without orphan
     const correction = page.getByRole("dialog", { name: "匹配正式球员", exact: true });
     await expect(correction.getByRole("button", { name: "确认匹配", exact: true })).toBeDisabled();
     await selectOption(page, "匹配正式球员姓名", data.names.star);
-    await selectOption(page, "正式球员当天原队", "蓝队");
+    await expect(correction.getByRole("combobox", { name: "正式球员当天原队" })).toHaveCount(0);
     await correction.getByRole("button", { name: "确认匹配", exact: true }).click();
     await expect(trialRow).toHaveCount(0);
     // The edit is only a draft until confirmation; the persisted pending identity remains intact.
@@ -327,7 +331,6 @@ test("roster-stage correction is preserved when raw names are parsed into formal
     await expect(trialRow).toContainText("待确认");
     await trialRow.getByRole("button", { name: "匹配正式球员", exact: true }).click();
     await selectOption(page, "匹配正式球员姓名", data.names.star);
-    await selectOption(page, "正式球员当天原队", "红队");
     await page.getByRole("dialog", { name: "匹配正式球员", exact: true }).getByRole("button", { name: "确认匹配", exact: true }).click();
     await expect(trialRow).toHaveCount(0);
     await page.getByLabel(/赛后文本/).fill(`第一节白蓝0:1，${data.names.trial}替蓝队进球\n第二节白红0:1\n第三节红蓝1:0\n第四节白蓝0:0\n第五节白红0:1\n第六节红蓝1:0`);

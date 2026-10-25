@@ -106,7 +106,7 @@ describe("confirmMatchDay identity preflight", () => {
         }),
         update: vi.fn().mockResolvedValue({ id: "match-1" })
       },
-      player: { findMany: vi.fn() },
+      player: { findMany: vi.fn().mockResolvedValue([{ id: "player-1" }]) },
       goalEvent: { deleteMany: vi.fn(), create: goalCreate },
       playerMatchdayPoint: { deleteMany: vi.fn(), createMany: vi.fn() },
       teamMatchdayResult: { deleteMany: vi.fn(), createMany: vi.fn() },
@@ -175,6 +175,7 @@ describe("confirmMatchDay identity preflight", () => {
       internalGame: vi.fn()
     };
     const tx = {
+      player: { findMany: vi.fn().mockResolvedValue([{ id: "scorer-1" }, { id: "assist-1" }]) },
       matchDay: {
         findUnique: vi.fn().mockResolvedValue({
           id: "match-1",

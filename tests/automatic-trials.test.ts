@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { assignAutomaticTrials, isTrialLabel } from "@/lib/ai/automatic-trials";
 import { localParseMatch } from "@/lib/ai/local-parser";
+import { parseRosterWithAi } from "@/lib/ai/roster";
+import { vi } from "vitest";
 
 describe("automatic trial identities", () => {
+  it("uses an exact formal name before the generic trial-label rule in roster recognition", async () => {
+    vi.stubEnv("DEEPSEEK_API_KEY", "");
+    try {
+      const result = await parseRosterWithAi({ rawText: "蓝\n试训张三", matchType: "INTERNAL", players: [{ id: "formal", name: "试训张三", aliases: [] }] });
+      expect(result.parsed.assignments[0].playerId).toBe("formal");
+    } finally { vi.unstubAllEnvs(); }
+  });
   it("deduplicates unknown scorers and assistants, while preserving formal/manual identities", () => {
     const parsed = { matchType: "internal", games: [{ events: [
       { scorer: { rawName: "临时球员", playerId: null }, assist: { rawName: "陌生甲", playerId: null } },

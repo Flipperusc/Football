@@ -118,6 +118,7 @@ test("missing credited team can be chosen in the dialog before manual ranking", 
     const dialog = page.getByRole("dialog", { name: "特殊比赛事件确认" });
     await expect(dialog).toBeVisible();
     const continueButton = dialog.getByRole("button", { name: "确认特殊事件并继续" });
+    await expect(dialog.getByText("得分队待确认", { exact: true })).toBeVisible();
     await expect(continueButton).toBeDisabled();
     // The own-goal parser puts its event first; the unresolved guest is second.
     await selectOption(page, "确认第1节事件2得分队", "白队");

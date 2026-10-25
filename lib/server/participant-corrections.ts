@@ -11,6 +11,5 @@ export async function assertParticipantCorrections(
   for (const row of corrections) {
     if (!players.some((player) => player.id === row.playerId)) throw new Error(`身份纠正的正式球员不存在：${row.rawName}`);
     if (players.some((player) => player.id !== row.playerId && [player.name, ...player.aliases.map((alias) => alias.alias)].some((name) => normalized(name) === normalized(row.rawName)))) throw new Error(`身份纠正名字已属于其他正式球员：${row.rawName}`);
-    if (matchType === "INTERNAL" && !assignments.some((person) => person.playerId === row.playerId)) throw new Error(`请先为 ${row.rawName} 纠正后的正式球员选择当天原队`);
   }
 }

@@ -152,7 +152,6 @@ function uniqueCandidates(candidates: { playerId: string; name: string; confiden
 }
 
 function matchRawName(rawName: string, players: ParserPlayer[]) {
-  if (isTrialLabel(rawName)) return { playerId: null, matchedName: null, confidence: 0, candidates: [] };
   const value = normalize(rawName);
   const records = recordsFor(players);
   const exact = records.find((record) => record.alias === value);
@@ -164,6 +163,8 @@ function matchRawName(rawName: string, players: ParserPlayer[]) {
       candidates: []
     };
   }
+
+  if (isTrialLabel(rawName)) return { playerId: null, matchedName: null, confidence: 0, candidates: [] };
 
   const candidates = uniqueCandidates(
     records

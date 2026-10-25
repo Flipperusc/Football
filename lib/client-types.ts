@@ -18,6 +18,15 @@ export type Season = {
 
 export type TrialPlayer = { id: string; name: string; confirmed: boolean; matchDayId?: string };
 
+export type TrialIdentityChoice = { name: string; playerId?: never } | { playerId: string; name?: never };
+export type TrialResolutionResponse = {
+  player: Player;
+  trialPlayers: TrialPlayer[];
+  participantCorrections: { rawName: string; playerId: string }[];
+  matchDayVersion?: string;
+  parsedJson?: unknown;
+};
+
 export type MatchDay = {
   participantCorrections?: { rawName: string; playerId: string }[];
   id: string;

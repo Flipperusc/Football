@@ -1,10 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { mergePendingTrials, summarizeTrialEvents, replaceTrialParticipant, formalNameConflict, retainRosterCorrections } from "@/lib/trial-players";
+import { mergePendingTrials, summarizeTrialEvents, replaceTrialParticipant, formalNameConflict, retainKnownPlayerCorrections, resolveTrialReferences, applyRosterParticipantCorrections } from "@/lib/trial-players";
+import { internalParseResultSchema } from "@/lib/ai/schemas";
 
 describe("trial participant editing", () => {
-  it("drops a correction after its formal player is removed from the roster", () => {
-    expect(retainRosterCorrections([{ rawName: "小张", playerId: "p1" }, { rawName: "小李", playerId: "p2" }], [{ playerId: "p2" }]))
-      .toEqual([{ rawName: "小李", playerId: "p2" }]);
+  it("uses match-local corrections when recognizing a roster again after promotion with an edited name", () => {
+    const rows = [{ rawName: " 试训甲 ", playerId: null, needsReview: true, teamColor: "BLUE", role: "GOALKEEPER", confidence: 0 }];
+    const resolved = applyRosterParticipantCorrections(rows, [{ rawName: "试训甲", playerId: "p1" }], [{ id: "p1", name: "张三" }]);
+    expect(resolved).toEqual([{ ...rows[0], playerId: "p1", matchedName: "张三", confidence: 1, needsReview: false }]);
+    expect(mergePendingTrials([], resolved, () => "unwanted-trial")).toEqual([]);
+    expect(rows[0].playerId).toBeNull();
+    expect(applyRosterParticipantCorrections(rows, [{ rawName: "试训甲", playerId: "deleted" }], [])).toEqual(rows);
+  });
+  it("retains corrections for every existing formal player independently of the roster", () => {
+    expect(retainKnownPlayerCorrections([{ rawName: "小张", playerId: "p1" }, { rawName: "小李", playerId: "deleted" }], [{ id: "p1" }]))
+      .toEqual([{ rawName: "小张", playerId: "p1" }]);
+  });
+  it("converts all roles of one trial while preserving source text, teams and the original snapshot", () => {
+    const trial = { playerId: null, trialPlayerId: "t1", rawName: "试训甲", confidence: 1 };
+    const formal = { playerId: "p2", rawName: "乙", confidence: 1 };
+    const parsed = internalParseResultSchema.parse({ matchType: "internal", games: [{ sectionNo: 1, teamA: "blue", teamB: "white", scoreA: 2, scoreB: 1, rawText: "原始文本", events: [
+      { type: "goal", team: "blue", scorer: trial, assist: formal, rawText: "甲进球" },
+      { type: "goal", team: "blue", scorer: formal, assist: { ...trial, rawName: "试训甲昵称" }, rawText: "甲助攻" },
+      { type: "own_goal", team: "white", scorer: trial, rawText: "甲乌龙" }
+    ] }] });
+    const result = resolveTrialReferences(parsed, "t1", { id: "p1", name: "甲" });
+    expect(result.rawNames).toEqual(["试训甲", "试训甲昵称"]);
+    expect(result.parsed.games[0].events[0].scorer).toMatchObject({ playerId: "p1", trialPlayerId: null, rawName: "试训甲" });
+    expect(result.parsed.games[0].events[1].assist?.playerId).toBe("p1");
+    expect(result.parsed.games[0].events[2]).toMatchObject({ type: "own_goal", team: "white", rawText: "甲乌龙", scorer: { playerId: "p1" } });
+    expect(parsed.games[0].events[0].scorer.playerId).toBeNull();
   });
   it("flags known formal names and aliases instead of silently creating a second trial identity", () => {
     const players = [{ id: "p1", name: "张三", aliases: [{ alias: "小张" }] }];

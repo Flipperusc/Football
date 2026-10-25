@@ -8,6 +8,17 @@ import {
 } from "@/lib/stats/calculate";
 
 describe("football statistics", () => {
+  it("counts unassigned formal goals and assists without appearances or rank points", () => {
+    const stats = calculateSeasonPlayerStats({
+      players: [{ id: "guest", name: "名单外正式" }],
+      matchDays: [{ id: "m1", seasonId: "s1", type: "INTERNAL" }], assignments: [], playerPoints: [],
+      goalEvents: [
+        { matchDayId: "m1", matchType: "INTERNAL", scorerId: "guest", count: 2 },
+        { matchDayId: "m1", matchType: "INTERNAL", scorerId: null, assistPlayerId: "guest", count: 1 }
+      ]
+    });
+    expect(stats[0]).toMatchObject({ internalGoals: 2, internalAssists: 1, internalAppearances: 0, internalSeasonPoints: 0, goalsPerAppearance: 0, assistsPerAppearance: 0 });
+  });
   it("counts guest goals but excludes own goals while preserving every roster player's attendance and original points", () => {
     const stats = calculateSeasonPlayerStats({
       players: [{ id: "guest", name: "代打" }, { id: "absent", name: "临时未到" }, { id: "own", name: "乌龙" }],
