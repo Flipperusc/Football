@@ -39,6 +39,15 @@ function mockDeepSeek(content: unknown) {
 }
 
 describe("post-match AI parsing", () => {
+  it("recognizes an exact global formal identity even when its name contains a trial label", async () => {
+    const formalPlayers = [{ id: "formal-trial-name", name: "试训张三", aliases: [] }];
+    const rawText = "第一节白蓝0:1，试训张三替蓝队进球";
+    mockDeepSeek({ matchType: "internal", games: [{ sectionNo: 1, teamA: "white", teamB: "blue", scoreA: 0, scoreB: 1,
+      goals: [{ scorerName: "试训张三", team: "blue", rawText: "试训张三替蓝队进球" }] }] });
+    const input = { rawText, matchType: "INTERNAL" as const, players: formalPlayers, teamAssignments: [] };
+    expect(expectInternalParsed((await parseMatchWithAi(input)).parsed).games[0].events[0].scorer.playerId).toBe("formal-trial-name");
+    expect(expectInternalParsed(localParseMatch(input)).games[0].events[0].scorer.playerId).toBe("formal-trial-name");
+  });
   it("preserves an explicit score when an unmarked guest conflicts with the roster", async () => {
     const rawText = "第一节白蓝0:1宇哥进球";
     mockDeepSeek({ matchType: "internal", games: [{ sectionNo: 1, teamA: "white", teamB: "blue", scoreA: 0, scoreB: 1, rawText,

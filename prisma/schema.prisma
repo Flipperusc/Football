@@ -90,6 +90,7 @@ model Player {
   points              PlayerMatchdayPoint[]
   awards              Award[]
   statAdjustments     PlayerStatAdjustment[]
+  trialResolutions    TrialResolution[]
 }
 
 model PlayerAlias {
@@ -137,8 +138,25 @@ model MatchDay {
   playerPoints   PlayerMatchdayPoint[]
   awards         Award[]
   parseResults   MatchParseResult[]
+  trialResolutions TrialResolution[]
 
   @@index([seasonId, date])
+}
+
+// One explicit identity decision per trial ID, including unsaved entry forms.
+model TrialResolution {
+  id            String   @id
+  sourceName    String
+  requestedName String?
+  playerId      String
+  player        Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  matchDayId    String?
+  matchDay      MatchDay? @relation(fields: [matchDayId], references: [id], onDelete: Cascade)
+  resultVersion DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([playerId])
+  @@index([matchDayId])
 }
 
 model TeamAssignment {
@@ -182,6 +200,8 @@ model GoalEvent {
   kind           GoalKind      @default(NORMAL)
   scorerRosterTeam TeamColor?
   assistRosterTeam TeamColor?
+  scorerIsGuest Boolean @default(false)
+  assistIsGuest Boolean @default(false)
   exceptionConfirmedAt DateTime?
   exceptionConfirmedBy String?
   scorerId       String?

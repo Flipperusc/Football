@@ -42,6 +42,7 @@ const trialId = "c35ac3b2-27b0-467b-bae2-3fa238f6ff41";
 function databaseFixture() {
   const data = { id: "m", updatedAt: new Date(), rawText: "", type: "INTERNAL", assignments: [{ matchDayId: "m", playerId: "p", teamColor: "BLUE", pointsEligible: true }], trialPlayers: [{ ...trial, id: trialId, matchDayId: "m" }] };
   const tx = {
+    player: { findMany: vi.fn(async () => [{ id: "p", name: "正式", aliases: [] }]) },
     matchDay: { findUnique: vi.fn(async () => data), update: vi.fn(async (_args: { data: { participantCorrections: { rawName: string; playerId: string }[] } }) => data) },
     trialPlayer: { findMany: vi.fn(async () => data.trialPlayers), deleteMany: vi.fn(), upsert: vi.fn() },
     goalEvent: { deleteMany: vi.fn(), create: vi.fn() },
@@ -130,9 +131,9 @@ describe("match scoped roster corrections", () => {
     if (value.matchType !== "internal") return;
     expect(value.games[0].events[0].scorer).toMatchObject({ playerId: "p", trialPlayerId: null, confidence: 1 });
   });
-  it("requires a real assigned formal player and rejects another person's exact name", async () => {
+  it("accepts real unassigned formal players and rejects another person's exact name", async () => {
     const tx = { player: { findMany: vi.fn(async () => [{ id: "p", name: "正式", aliases: [] }, { id: "other", name: "别人", aliases: [] }]) } };
-    await expect(assertParticipantCorrections(tx as never, [{ rawName: "试训名", playerId: "p" }], [], "INTERNAL")).rejects.toThrow("当天原队");
+    await expect(assertParticipantCorrections(tx as never, [{ rawName: "试训名", playerId: "p" }], [], "INTERNAL")).resolves.toBeUndefined();
     await expect(assertParticipantCorrections(tx as never, [{ rawName: "别人", playerId: "p" }], assignments, "INTERNAL")).rejects.toThrow("其他正式球员");
     await expect(assertParticipantCorrections(tx as never, [{ rawName: "试训名", playerId: "p" }], assignments, "INTERNAL")).resolves.toBeUndefined();
   });

@@ -35,8 +35,10 @@ export type EventException = {
   team?: InternalTeam;
   representedTeam?: InternalTeam;
   scorerName: string;
+  scorerIsTrial: boolean;
   scorerTeam?: InternalTeam;
   assistName?: string;
+  assistIsTrial: boolean;
   assistTeam?: InternalTeam;
   count: number;
   reasons: ("OWN_GOAL" | "SCORER_GUEST" | "ASSIST_GUEST" | "TEAM_REQUIRED")[];
@@ -46,6 +48,8 @@ export type EventResolution = {
   teamColor: InternalTeamColor;
   scorerRosterTeam: InternalTeamColor | null;
   assistRosterTeam: InternalTeamColor | null;
+  scorerIsGuest: boolean;
+  assistIsGuest: boolean;
   isException: boolean;
 };
 
@@ -101,10 +105,6 @@ export function inspectInternalEvents(parsed: { games: EventGame[] }, assignment
       if (!validParticipant(event.scorer, prefix) || (event.assist && !validParticipant(event.assist, prefix))) return;
       const scorerTeam = rosterTeam(event.scorer.playerId, assignments);
       const assistTeam = event.assist ? rosterTeam(event.assist.playerId, assignments) : undefined;
-      if ((!scorerTeam && !event.scorer.trialPlayerId) || (event.assist && !assistTeam && !event.assist.trialPlayerId)) {
-        issues.push(`${prefix}球员尚未分队，请先补充当天红、蓝、白分队名单`);
-        return;
-      }
       if (event.type === "own_goal" && event.assist) {
         issues.push(`${prefix}乌龙球不计助攻，请清空助攻球员`);
       }
@@ -119,21 +119,23 @@ export function inspectInternalEvents(parsed: { games: EventGame[] }, assignment
       const reasons: EventException["reasons"] = [];
       if (event.type === "own_goal") reasons.push("OWN_GOAL");
       if (!team) reasons.push("TEAM_REQUIRED");
-      if (representedTeam && scorerTeam && scorerTeam !== representedTeam) reasons.push("SCORER_GUEST");
-      if (event.type === "goal" && team && assistTeam && assistTeam !== team) reasons.push("ASSIST_GUEST");
+      const scorerIsGuest = Boolean(event.scorer.playerId && (!scorerTeam || (representedTeam && scorerTeam !== representedTeam)));
+      const assistIsGuest = Boolean(event.type === "goal" && event.assist?.playerId && (!assistTeam || (team && assistTeam !== team)));
+      if (scorerIsGuest) reasons.push("SCORER_GUEST");
+      if (assistIsGuest) reasons.push("ASSIST_GUEST");
       if (reasons.length) {
         exceptions.push({
           key, gameIndex, eventIndex, sectionNo: game.sectionNo, teamA: game.teamA, teamB: game.teamB,
-          type: event.type, team, representedTeam, scorerName, scorerTeam,
+          type: event.type, team, representedTeam, scorerName, scorerTeam, scorerIsTrial: Boolean(event.scorer.trialPlayerId),
           assistName: event.assist ? event.assist.matchedName || event.assist.rawName : undefined,
-          assistTeam, count: event.count, reasons
+          assistTeam, assistIsTrial: Boolean(event.assist?.trialPlayerId), count: event.count, reasons
         });
       }
       if (team) {
         knownGoals[team] += event.count;
         resolutions.push({
           key, teamColor: internalTeamToDb[team], scorerRosterTeam: scorerTeam ? internalTeamToDb[scorerTeam] : null,
-          assistRosterTeam: assistTeam ? internalTeamToDb[assistTeam] : null, isException: reasons.length > 0
+          assistRosterTeam: assistTeam ? internalTeamToDb[assistTeam] : null, scorerIsGuest, assistIsGuest, isException: reasons.length > 0
         });
       }
     });
@@ -149,6 +151,8 @@ export type StoredGoalAttribution = {
   teamColor?: TeamColor | null;
   scorerRosterTeam?: TeamColor | null;
   assistRosterTeam?: TeamColor | null;
+  scorerIsGuest?: boolean;
+  assistIsGuest?: boolean;
 };
 
 /** Historical rows without roster snapshots retain their original display. */
@@ -164,7 +168,8 @@ export function goalEventMarker(
     : event.teamColor;
   const originalTeam = role === "scorer" ? event.scorerRosterTeam : event.assistRosterTeam;
   const markers = [];
-  if (originalTeam && representedTeam && originalTeam !== representedTeam) markers.push("代打");
+  const isGuest = role === "scorer" ? event.scorerIsGuest : event.assistIsGuest;
+  if (isGuest || (originalTeam && representedTeam && originalTeam !== representedTeam)) markers.push("代打");
   if (ownGoal && role === "scorer") markers.push("乌龙");
   return markers.length ? `（${markers.join("、")}）` : "";
 }

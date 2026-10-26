@@ -441,8 +441,10 @@ function alignScoresWithAssignedGoals(game: CleanGame, events: ParsedGoalEvent[]
 function matchEventParticipant(name: string, input: AiParseInput): MatchedPlayer {
   const matches = input.matchType === "INTERNAL" ? (input.trialPlayers ?? []).filter((trial) => normalizeKey(trial.name) === normalizeKey(name)) : [];
   if (matches.length === 1) return { rawName: name, playerId: null, trialPlayerId: matches[0].id, matchedName: matches[0].name, confidence: 1, candidates: [] };
+  const formal = matchPlayer(name, input.players);
+  if (formal.playerId && formal.confidence >= 0.9) return formal;
   if (input.matchType === "INTERNAL" && isTrialLabel(name)) return { rawName: name, playerId: null, confidence: 0, candidates: [] };
-  return matchPlayer(name, input.players);
+  return formal;
 }
 
 function parsedGoal(goal: CleanGoal, input: AiParseInput, game?: CleanGame): ParsedGoalEvent {

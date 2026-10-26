@@ -118,6 +118,19 @@ export const trialPlayersInputSchema = z.array(trialPlayerInputSchema).max(100).
   (rows) => new Set(rows.map((row) => row.id)).size === rows.length, "试训身份不能重复"
 );
 
+export const resolveTrialSchema = z.object({
+  trialId: z.string().uuid(),
+  trialPlayers: trialPlayersInputSchema,
+  name: z.string().trim().min(1).max(100).optional(),
+  playerId: z.string().min(1).optional(),
+  matchDayId: z.string().min(1).optional(),
+  matchDayVersion: z.string().datetime().optional(),
+  parsedJson: z.unknown().optional(),
+  participantCorrections: participantCorrectionsSchema.default([])
+}).refine((body) => Boolean(body.name) !== Boolean(body.playerId), "请选择创建正式姓名或匹配已有球员")
+  .refine((body) => !body.matchDayId || Boolean(body.matchDayVersion), "请重新加载比赛后处理身份")
+  .refine((body) => body.trialPlayers.some((trial) => trial.id === body.trialId), "试训身份不在当前待处理名单中");
+
 export const teamAssignmentInputSchema = z.object({
   teamColor: teamColorSchema,
   playerId: z.string().min(1),

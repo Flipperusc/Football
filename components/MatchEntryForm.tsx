@@ -4,11 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, App, Button, Form, Input, Select, Space, Tag, Upload as AntUpload } from "antd";
 import { Plus, Send, Upload, Wand2, UsersRound } from "lucide-react";
-import type { MatchDay, Player, Season } from "@/lib/client-types";
+import type { MatchDay, Player, Season, TrialIdentityChoice, TrialResolutionResponse } from "@/lib/client-types";
 import { getRequestErrorMessage, requestJson } from "@/lib/client-types";
 import { useElapsedSeconds } from "@/lib/use-elapsed-seconds";
 import { TrialPlayersPanel } from "@/components/TrialPlayersPanel";
-import { mergePendingTrials, retainRosterCorrections, type TrialDraft } from "@/lib/trial-players";
+import { applyRosterParticipantCorrections, mergePendingTrials, retainKnownPlayerCorrections, type TrialDraft } from "@/lib/trial-players";
 
 type TeamColor = "RED" | "BLUE" | "WHITE" | "EXTERNAL";
 type InternalTeamColor = Exclude<TeamColor, "EXTERNAL">;
@@ -90,6 +90,8 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
   const [recognizing, setRecognizing] = useState(false);
   const [recognizeSource, setRecognizeSource] = useState<RecognizeSource>("text");
   const [editingMatchDayId, setEditingMatchDayId] = useState<string>();
+  const [matchDayVersion, setMatchDayVersion] = useState<string>();
+  const [resolvingTrial, setResolvingTrial] = useState(false);
   const [editingConfirmedMatch, setEditingConfirmedMatch] = useState(false);
   const [parseFailed, setParseFailed] = useState(false);
   const [parseError, setParseError] = useState<string>();
@@ -112,7 +114,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
     BLUE: undefined,
     WHITE: undefined
   });
-  const submitting = submitPhase !== "idle";
+  const submitting = submitPhase !== "idle" || resolvingTrial;
   const parseElapsedSeconds = useElapsedSeconds(submitPhase === "parsing");
   const recognizeElapsedSeconds = useElapsedSeconds(recognizing);
 
@@ -144,6 +146,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
         setParseFailed(matchRow.parseStatus === "FAILED");
 
         setEditingMatchDayId(matchRow.id);
+        setMatchDayVersion(matchRow.updatedAt);
         form.setFieldsValue({
           seasonId: matchRow.seasonId,
           date: matchRow.date.slice(0, 10),
@@ -282,9 +285,10 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
       WHITE: undefined
     };
     const recognizedPlayerIds = new Set<string>();
-    setTrialPlayers((current) => mergePendingTrials(current, result.parsed.assignments.filter((row) => isInternalTeam(row.teamColor)), () => crypto.randomUUID()));
+    const rows = applyRosterParticipantCorrections(result.parsed.assignments, participantCorrections, players);
+    setTrialPlayers((current) => mergePendingTrials(current, rows.filter((row) => isInternalTeam(row.teamColor)), () => crypto.randomUUID()));
 
-    for (const row of result.parsed.assignments) {
+    for (const row of rows) {
       if (
         !row.playerId || row.needsReview ||
         !isInternalTeam(row.teamColor) ||
@@ -419,9 +423,25 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
     }
   }
 
+  async function resolveTrial(trialId: string, choice: TrialIdentityChoice) {
+    if (submitting) return;
+    setResolvingTrial(true);
+    try {
+      const result = await requestJson<TrialResolutionResponse>("/api/players/resolve-trial", {
+        method: "POST", body: JSON.stringify({ trialId, ...choice, trialPlayers, participantCorrections,
+          ...(editingMatchDayId ? { matchDayId: editingMatchDayId, matchDayVersion } : {}) })
+      });
+      setPlayers((current) => [...current.filter((player) => player.id !== result.player.id), result.player]);
+      setTrialPlayers(result.trialPlayers);
+      setParticipantCorrections(result.participantCorrections);
+      if (result.matchDayVersion) setMatchDayVersion(result.matchDayVersion);
+    } finally { setResolvingTrial(false); }
+  }
+
   async function submit(values: FormValues) {
+    if (submitting) return;
     const assignments = type === "INTERNAL" ? internalAssignments() : externalAssignments(values);
-    const retainedCorrections = retainRosterCorrections(participantCorrections, assignments);
+    const retainedCorrections = retainKnownPlayerCorrections(participantCorrections, players);
     if (type === "INTERNAL" && assignments.length === 0) {
       message.error("请先填写红队、蓝队、白队球员，否则无法给球员分配第一名/第二名/第三名积分");
       return;
@@ -433,7 +453,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
     setParseError(undefined);
     try {
       const matchDay = editingMatchDayId
-        ? await requestJson<{ id: string }>(`/api/matchdays/${editingMatchDayId}`, {
+        ? await requestJson<{ id: string; updatedAt: string }>(`/api/matchdays/${editingMatchDayId}`, {
             method: "PATCH",
             body: JSON.stringify({
               seasonId: values.seasonId,
@@ -444,7 +464,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
               ...(type === "INTERNAL" ? { trialPlayers, participantCorrections: retainedCorrections } : {})
             })
           })
-        : await requestJson<{ id: string }>("/api/matchdays", {
+        : await requestJson<{ id: string; updatedAt: string }>("/api/matchdays", {
             method: "POST",
             body: JSON.stringify({
               seasonId: values.seasonId,
@@ -459,6 +479,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
       savedMatchDayId = matchDay.id;
       setParticipantCorrections(retainedCorrections);
       setEditingMatchDayId(matchDay.id);
+      setMatchDayVersion(matchDay.updatedAt);
       setEditingConfirmedMatch(false);
       setParseFailed(false);
       if (!editingMatchDayId) {
@@ -676,14 +697,7 @@ export function MatchEntryForm({ type }: { type: "INTERNAL" | "EXTERNAL" }) {
           ))}
           <TrialPlayersPanel trials={trialPlayers} players={players} disabled={submitting || recognizing}
             onChange={setTrialPlayers} onRemove={(id) => setTrialPlayers((current) => current.filter((trial) => trial.id !== id))}
-            onResolve={(trialId, playerId, team) => {
-              const trial = trialPlayers.find((item) => item.id === trialId);
-              if (trial) setParticipantCorrections((current) => [...current.filter((row) => row.rawName !== trial.name), { rawName: trial.name, playerId }]);
-              const assigned = internalAssignments().some((row) => row.playerId === playerId);
-              if (!assigned) setTeamPlayers((current) => ({ ...current, [team]: unique([...current[team], playerId]) }));
-              setTrialPlayers((current) => current.filter((trial) => trial.id !== trialId));
-              message.success("已匹配正式球员，请核对当天分队");
-            }} />
+            onResolve={resolveTrial} />
         </Space>
       ) : (
         <>
